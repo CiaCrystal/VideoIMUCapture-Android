@@ -39,7 +39,8 @@ public class IMUManager extends SensorEventCallback {
 
         SensorPacket(long time, float[] vals) {
             timestamp = time;
-            values = vals;
+            // Android may reuse the event array after the callback returns.
+            values = vals.clone();
         }
     }
 

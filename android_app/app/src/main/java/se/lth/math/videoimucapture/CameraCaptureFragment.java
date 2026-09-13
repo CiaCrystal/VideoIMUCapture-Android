@@ -290,7 +290,7 @@ public class CameraCaptureFragment extends Fragment
         Camera2Proxy camera2Proxy = getmCamera2Proxy();
         String outputDir = renewOutputDir();
         String outputFile = outputDir + File.separator + "video_recording.mp4";
-        String metaFile = outputDir + File.separator + "video_meta.pb3";
+        String metaFile = outputDir + File.separator + "video_meta.txt";
         RecordingWriter recordingWriter = getsRecordingWriter();
         try {
             recordingWriter.startRecording(metaFile);

@@ -2,15 +2,15 @@ package se.lth.math.videoimucapture;
 
 import android.util.Log;
 
-import com.google.protobuf.Timestamp;
-
+import java.io.BufferedWriter;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
 import java.util.Queue;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 
-import se.lth.math.videoimucapture.RecordingProtos.VideoCaptureData;
 import se.lth.math.videoimucapture.RecordingProtos.VideoFrameMetaData;
 import se.lth.math.videoimucapture.RecordingProtos.VideoFrameToTimestamp;
 import se.lth.math.videoimucapture.RecordingProtos.IMUData;
@@ -24,7 +24,7 @@ public class RecordingWriter implements Runnable{
     final private static String TAG = "RecordingWriter";
     final private Boolean VERBOSE = false;
 
-    private FileOutputStream mFileStream;
+    private BufferedWriter mFileStream;
     private BlockingQueue<MessageWrapper> mQueue = new ArrayBlockingQueue<>(1000);
     //Empty message as poison pill
     private final MessageWrapper mPoisonPill = MessageWrapper.newBuilder().build();
@@ -34,14 +34,15 @@ public class RecordingWriter implements Runnable{
     private Queue<VideoFrameToTimestamp> mFrameTimeQueue = new ArrayBlockingQueue<>(100);
 
     //Other state variables
-    private Boolean mIsRecording = false;
+    private volatile boolean mIsRecording = false;
 
     public Boolean isRecording() {return mIsRecording;}
 
     public void startRecording(String resultFile) throws IOException {
 
         Log.d(TAG, String.format("Starting on %s thread", Thread.currentThread()));
-        mFileStream = new FileOutputStream(resultFile);
+        mFileStream = new BufferedWriter(new OutputStreamWriter(
+                new FileOutputStream(resultFile), StandardCharsets.UTF_8));
 
         //Reset state
         mIsRecording = true;
@@ -73,9 +74,8 @@ public class RecordingWriter implements Runnable{
             while (true) {
                 MessageWrapper msg = mQueue.take();
                 if (msg.equals(mPoisonPill)) {
+                    writeUnmatchedFrames();
                     mFileStream.flush();
-                    mFileStream.close();
-                    mIsRecording = false;
                     return;
                 }
                 writeMessage(msg);
@@ -85,20 +85,19 @@ public class RecordingWriter implements Runnable{
         } catch (IOException e) {
             //TODO:SOMETHING USEFUL
             Log.e(TAG,"Write error, SHOULD stop recording!!!!!" + e);
+        } finally {
+            try {
+                mFileStream.close();
+            } catch (IOException e) {
+                Log.e(TAG, "Could not close recording text file", e);
+            }
+            mIsRecording = false;
         }
     }
 
     private void initializeFile() throws IOException {
         if (VERBOSE) Log.d(TAG, String.format("Initialize on %s thread", Thread.currentThread()));
-        // Set timestamp
-        VideoCaptureData.Builder dataBuilder = VideoCaptureData.newBuilder();
-        long millis = System.currentTimeMillis();
-        Timestamp timestamp = Timestamp.newBuilder().setSeconds(millis / 1000)
-                .setNanos((int) ((millis % 1000) * 1000000)).build();
-        dataBuilder.setTime(timestamp);
-
-        //Write to file
-        dataBuilder.build().writeTo(mFileStream);
+        mFileStream.write(RecordingTextFormatter.header(System.currentTimeMillis()));
     }
 
     private void writeMessage(MessageWrapper msg) throws IOException {
@@ -118,18 +117,15 @@ public class RecordingWriter implements Runnable{
                 break;
             case IMU_DATA:
                 if (VERBOSE) Log.d(TAG,"Got IMU data");
-                VideoCaptureData.newBuilder().addImu(msg.getImuData())
-                        .build().writeTo(mFileStream);
+                mFileStream.write(RecordingTextFormatter.imu(msg.getImuData()));
                 break;
             case IMU_META:
                 if (VERBOSE) Log.d(TAG,"Got IMU Info");
-                VideoCaptureData.newBuilder().mergeImuMeta(msg.getImuMeta())
-                        .build().writeTo(mFileStream);
+                mFileStream.write(RecordingTextFormatter.imuInfo(msg.getImuMeta()));
                 break;
             case CAMERA_META:
                 if (VERBOSE) Log.d(TAG,"Got Camera Meta");
-                VideoCaptureData.newBuilder().mergeCameraMeta(msg.getCameraMeta())
-                        .build().writeTo(mFileStream);
+                mFileStream.write(RecordingTextFormatter.cameraInfo(msg.getCameraMeta()));
                 break;
         }
     }
@@ -151,7 +147,7 @@ public class RecordingWriter implements Runnable{
                 // They are from the same capture frame
                 VideoFrameMetaData.Builder frameBuilder = VideoFrameMetaData.newBuilder().mergeFrom(frameMetaMsg)
                         .setFrameNumber(frameTimeMsg.getFrameNbr());
-                VideoCaptureData.newBuilder().addVideoMeta(frameBuilder).build().writeTo(mFileStream);
+                mFileStream.write(RecordingTextFormatter.frame(frameBuilder.build(), true));
                 // Remove frames from queue
                 mFrameTimeQueue.poll();
                 mFrameDataQueue.poll();
@@ -159,17 +155,26 @@ public class RecordingWriter implements Runnable{
                 break;
             } else if (timeDiffNs > 0) {
                 //Meta message is too old, try another one
-                mFrameDataQueue.poll(); // throw old
+                mFileStream.write(RecordingTextFormatter.frame(mFrameDataQueue.poll(), false));
                 frameMetaMsg = mFrameDataQueue.peek();
-                Log.d(TAG, "Diff too large, skipping frame meta data");
+                Log.d(TAG, "Diff too large, saved unmatched frame meta data");
             } else {
                 // Frame Time message too old, try another one
-                mFrameTimeQueue.poll(); // throw old
+                mFileStream.write(RecordingTextFormatter.unmatchedFrameTime(mFrameTimeQueue.poll()));
                 frameTimeMsg = mFrameTimeQueue.peek();
-                Log.d(TAG, "Diff too large, skipping frame time data");
+                Log.d(TAG, "Diff too large, saved unmatched frame time data");
             }
         }
 
+    }
+
+    private void writeUnmatchedFrames() throws IOException {
+        while (!mFrameDataQueue.isEmpty()) {
+            mFileStream.write(RecordingTextFormatter.frame(mFrameDataQueue.poll(), false));
+        }
+        while (!mFrameTimeQueue.isEmpty()) {
+            mFileStream.write(RecordingTextFormatter.unmatchedFrameTime(mFrameTimeQueue.poll()));
+        }
     }
 
     private void queueData(MessageWrapper msg) {

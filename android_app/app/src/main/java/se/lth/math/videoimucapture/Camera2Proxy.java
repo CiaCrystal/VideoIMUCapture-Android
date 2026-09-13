@@ -483,6 +483,7 @@ public class Camera2Proxy {
     private void writeCaptureData(CaptureResult result, Float focal_length_pix) {
         RecordingProtos.VideoFrameMetaData.Builder frameBuilder = RecordingProtos.VideoFrameMetaData.newBuilder()
                 .setTimeNs(result.get(CaptureResult.SENSOR_TIMESTAMP))
+                .setFrameNumber(result.getFrameNumber())
                 .setFocalLengthMm(result.get(CaptureResult.LENS_FOCAL_LENGTH))
                 .setEstFocalLengthPix(focal_length_pix);
 
