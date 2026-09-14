@@ -18,6 +18,8 @@ final class RecordingTextFormatter {
                 + "# Numeric values are decimal; vectors are [x, y, z] unless specified.\n"
                 + "# time_ns/time_us use the capture clock, not Unix time.\n"
                 + "# IMU time_ns is the gyroscope timestamp; accel and mag are aligned by interpolation.\n"
+                + "# Missing/late magnetometer readings are []; they do not stop accel/gyro recording.\n"
+                + "# Actual stabilization modes: -1=not reported, 0=off, 1=on (DVS 2=preview).\n"
                 + "# Accuracy: 0=UNRELIABLE, 1=LOW, 2=MEDIUM, 3=HIGH.\n"
                 + "# Empty arrays mean unavailable; scalar defaults follow the protobuf schema.\n"
                 + "[RECORDING]\nstart_unix_time_ms=" + unixTimeMs + "\n\n";
@@ -84,6 +86,9 @@ final class RecordingTextFormatter {
 
     static String cameraInfo(CameraInfo data) {
         StringBuilder out = section("CAMERA_INFO", "camera");
+        field(out, "camera_id", data.getCameraId());
+        field(out, "available_ois_modes", data.getAvailableOisModesList());
+        field(out, "available_ois_data_modes", data.getAvailableOisDataModesList());
         vector(out, "intrinsic_params_fx_fy_cx_cy_s", data.getIntrinsicParamsList());
         vector(out, "original_intrinsic_params_fx_fy_cx_cy_s", data.getOriginalIntrinsicParamsList());
         vector(out, "distortion_params_k1_k2_k3_k4_k5", data.getDistortionParamsList());
@@ -122,6 +127,9 @@ final class RecordingTextFormatter {
         field(out, "estimated_focal_length_px", data.getEstFocalLengthPix());
         field(out, "focus_distance_diopters", data.getFocusDistanceDiopters());
         field(out, "focus_locked", data.getFocusLocked());
+        field(out, "actual_optical_stabilization_mode", data.getOpticalStabilizationMode());
+        field(out, "actual_video_stabilization_mode", data.getVideoStabilizationMode());
+        field(out, "actual_ois_data_mode", data.getOisDataMode());
         field(out, "ois_sample_count", data.getOISSamplesCount());
         for (int i = 0; i < data.getOISSamplesCount(); i++) {
             VideoFrameMetaData.OISSample sample = data.getOISSamples(i);

@@ -40,6 +40,25 @@ public class Camera2Proxy {
     private static final String TAG = "Camera2Proxy";
 
     private Activity mActivity;
+    private Context mContext;
+    private Runnable mReadyCallback;
+    private java.util.function.Consumer<Exception> mErrorCallback;
+    private volatile boolean mClosing;
+
+    public int getSensorOrientation() { return mSensorOrientation; }
+
+    /** A service-owned encoder surface does not depend on the activity's GL view. */
+    public void setRecordingSurface(Surface surface, Runnable ready,
+                                    java.util.function.Consumer<Exception> error) {
+        mPreviewSurface = surface;
+        mReadyCallback = ready;
+        mErrorCallback = error;
+    }
+
+    private void reportError(Exception error) {
+        Log.e(TAG, "Camera capture failed", error);
+        if (mErrorCallback != null) mErrorCallback.accept(error);
+    }
 
     private String mCameraIdStr = "";
     private Size mPreviewSize;
@@ -73,6 +92,7 @@ public class Camera2Proxy {
     private CameraDevice.StateCallback mStateCallback = new CameraDevice.StateCallback() {
         @Override
         public void onOpened(@NonNull CameraDevice camera) {
+            if (mClosing) { camera.close(); return; }
             Log.d(TAG, "onOpened");
             mCameraDevice = camera;
             initPreviewRequest();
@@ -80,12 +100,16 @@ public class Camera2Proxy {
 
         @Override
         public void onDisconnected(@NonNull CameraDevice camera) {
+            camera.close();
+            if (mErrorCallback != null) { reportError(new IllegalStateException("Camera disconnected")); return; }
             Log.d(TAG, "onDisconnected");
             releaseCamera();
         }
 
         @Override
         public void onError(@NonNull CameraDevice camera, int error) {
+            camera.close();
+            if (mErrorCallback != null) { reportError(new IllegalStateException("Camera error " + error)); return; }
             Log.e(TAG, "Camera Open failed, error: " + error);
             releaseCamera();
         }
@@ -103,9 +127,10 @@ public class Camera2Proxy {
         }
     }
 
-    public Camera2Proxy(Activity activity, CameraSettingsManager cameraSettingsManager) {
-        mActivity = activity;
-        mCameraManager = (CameraManager) mActivity.getSystemService(Context.CAMERA_SERVICE);
+    public Camera2Proxy(Context activity, CameraSettingsManager cameraSettingsManager) {
+        mActivity = activity instanceof Activity ? (Activity) activity : null;
+        mContext = activity.getApplicationContext();
+        mCameraManager = (CameraManager) mContext.getSystemService(Context.CAMERA_SERVICE);
         mCameraSettingsManager = cameraSettingsManager;
     }
 
@@ -140,7 +165,7 @@ public class Camera2Proxy {
             Log.d(TAG, "Video size " + videoSize.toString() +
                     " preview size " + mPreviewSize.toString());
 
-            logAnalyticsConfig();
+            if (mActivity != null) logAnalyticsConfig();
 
         } catch (CameraAccessException e) {
             e.printStackTrace();
@@ -149,6 +174,7 @@ public class Camera2Proxy {
     }
 
     public void openCamera() {
+        mClosing = false;
         Log.v(TAG, "openCamera");
         startBackgroundThread();
         if (mCameraIdStr.isEmpty()) {
@@ -158,11 +184,12 @@ public class Camera2Proxy {
         try {
             mCameraManager.openCamera(mCameraIdStr, mStateCallback, mBackgroundHandler);
         } catch (CameraAccessException | SecurityException e) {
-            e.printStackTrace();
+            reportError(e);
         }
     }
 
     public void releaseCamera() {
+        mClosing = true;
         Log.v(TAG, "releaseCamera");
         stopRecordingCaptureResult();
         if (null != mCaptureSession) {
@@ -205,13 +232,16 @@ public class Camera2Proxy {
 
                         @Override
                         public void onConfigured(@NonNull CameraCaptureSession session) {
+                            if (mClosing) { session.close(); return; }
                             mCaptureSession = session;
                             mPreviewRequest = mPreviewRequestBuilder.build();
                             startPreview();
+                            if (mReadyCallback != null) mReadyCallback.run();
                         }
 
                         @Override
                         public void onConfigureFailed(@NonNull CameraCaptureSession session) {
+                            reportError(new IllegalStateException("Camera session configuration failed"));
                             Log.e(TAG, "ConfigureFailed. session: mCaptureSession");
                         }
                     };
@@ -230,8 +260,8 @@ public class Camera2Proxy {
                         mBackgroundHandler);
             }
 
-        } catch (CameraAccessException e) {
-            e.printStackTrace();
+        } catch (CameraAccessException | RuntimeException e) {
+            reportError(e);
         }
     }
 
@@ -247,7 +277,7 @@ public class Camera2Proxy {
         } catch (CameraAccessException | IllegalStateException e) {
             // IllegalStateException may happen if shutting down the camera session prior to
             // full initialization.
-            e.printStackTrace();
+            reportError(e);
         }
     }
 
@@ -271,6 +301,9 @@ public class Camera2Proxy {
                 public void onCaptureCompleted(@NonNull CameraCaptureSession session,
                                                @NonNull CaptureRequest request,
                                                TotalCaptureResult result) {
+                    if (mClosing) return;
+                    try {
+
 
 
                     if (mCameraSettingsManager.focusOnTouch()) {
@@ -339,8 +372,11 @@ public class Camera2Proxy {
                     if (mRecordingMetadata) {
                         writeCaptureData(result, focal_length_pix);
                     }
-                    ((CameraCaptureActivity) mActivity).getmCameraCaptureFragment()
+                    if (mActivity != null) ((CameraCaptureActivity) mActivity).getmCameraCaptureFragment()
                             .updateCaptureResultPanel(focal_length_pix, exposureTimeNs);
+                                    } catch (RuntimeException error) {
+                        reportError(error);
+                    }
                 }
 
                 @Override
@@ -417,6 +453,14 @@ public class Camera2Proxy {
                 .setDistortionCorrection(mCameraSettingsManager.DistortionCorrectionEnabled())
                 .setSensorOrientation(mCameraCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION));
 
+        metaBuilder.setCameraId(mCameraIdStr);
+        int[] oisModes = mCameraCharacteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION);
+        if (oisModes != null) for (int mode : oisModes) metaBuilder.addAvailableOisModes(mode);
+        if (Build.VERSION.SDK_INT >= 28) {
+            int[] dataModes = mCameraCharacteristics.get(CameraCharacteristics.STATISTICS_INFO_AVAILABLE_OIS_DATA_MODES);
+            if (dataModes != null) for (int mode : dataModes) metaBuilder.addAvailableOisDataModes(mode);
+        }
+
         Size resolution = mCameraSettingsManager.getVideoSize();
         metaBuilder.setResolution(
                 RecordingProtos.CameraInfo.Size.newBuilder()
@@ -486,6 +530,13 @@ public class Camera2Proxy {
                 .setFrameNumber(result.getFrameNumber())
                 .setFocalLengthMm(result.get(CaptureResult.LENS_FOCAL_LENGTH))
                 .setEstFocalLengthPix(focal_length_pix);
+
+        Integer actualOis = result.get(CaptureResult.LENS_OPTICAL_STABILIZATION_MODE);
+        Integer actualDvs = result.get(CaptureResult.CONTROL_VIDEO_STABILIZATION_MODE);
+        Integer actualOisData = Build.VERSION.SDK_INT >= 28 ? result.get(CaptureResult.STATISTICS_OIS_DATA_MODE) : null;
+        frameBuilder.setOpticalStabilizationMode(actualOis == null ? -1 : actualOis)
+                .setVideoStabilizationMode(actualDvs == null ? -1 : actualDvs)
+                .setOisDataMode(actualOisData == null ? -1 : actualOisData);
 
         int focus_state = result.get(CaptureResult.CONTROL_AF_STATE);
         frameBuilder.setFocusLocked(focus_state != CaptureResult.CONTROL_AF_STATE_ACTIVE_SCAN
@@ -610,7 +661,7 @@ public class Camera2Proxy {
         try {
             if (mBackgroundThread != null) {
                 mBackgroundThread.quitSafely();
-                mBackgroundThread.join();
+                if (Thread.currentThread() != mBackgroundThread) mBackgroundThread.join();
             }
             mBackgroundThread = null;
             mBackgroundHandler = null;

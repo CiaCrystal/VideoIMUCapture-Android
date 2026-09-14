@@ -7,7 +7,7 @@ Android application for capturing video and IMU data useful for 3D reconstructio
 # Description
 This Android application is a data collection tool for researchers working with Simultaneous Localization and Mapping (SLAM) and Structure from Motion (SfM).
 
-It records Camera Frames at ~30Hz and Inertia Measurement Unit (IMU) data at ~100Hz synchronized to the same clock, given that the [Android device supports it](https://developer.android.com/reference/android/hardware/camera2/CameraCharacteristics#SENSOR_INFO_TIMESTAMP_SOURCE).
+It records Camera Frames at ~30Hz and requests Inertial Measurement Unit (IMU) data at 100Hz synchronized to the same clock, given that the [Android device supports it](https://developer.android.com/reference/android/hardware/camera2/CameraCharacteristics#SENSOR_INFO_TIMESTAMP_SOURCE).
 The camera frames are stored to a H.264/MP4 video file and the frame meta data together with IMU data is stored in a readable UTF-8 `video_meta.txt` file.
 
 A major problem with modern smartphones and 3D reconstruction is that all have Optical Image Stabilization (OIS), which means different camera parameters for each frame.
@@ -19,7 +19,7 @@ For the video capture it uses the Camera2 API.
 
 # Features
 - Captures camera frames at ~30Hz to H.264/MP4.
-- Captures IMU data at ~100Hz.
+- Requests accelerometer and gyroscope data at 100 Hz (10000 microseconds); actual rates depend on the device. Magnetometer sampling is requested separately at up to 100 Hz.
 - Synchronized clock, assuming [the device supports it](https://developer.android.com/reference/android/hardware/camera2/CameraCharacteristics#SENSOR_INFO_TIMESTAMP_SOURCE).
 - Stores IMU data, sensor information, camera parameters and frame meta data in a decimal text file with explicit sensor names and units.
 - Display warning if OIS or DVS is enabled since this affects the camera parameters.
@@ -30,6 +30,18 @@ To install on your Android device go to the [Release page](https://github.com/Da
 
 # Calibration
 To use the data for 3D reconstruction you will need to calibrate the IMU and Camera, see [Calibration README](calibration/README.md) for help.
+
+# Background video and IMU capture
+
+The main capture screen has a separate **后台采集（视频 + IMU）** button. Configure the camera first, stop any ordinary recording, then tap this button while the app is visible. Wait until the screen/notification reports that recording has started; you can then press Home, switch apps, or lock the screen. A camera foreground service owns the camera, encoder, IMU and TXT writer, with a partial wake lock during the recording. It does not depend on the activity's preview surface. The recording screen displays status instead of live preview in this mode.
+
+Stop using **Stop and save** in the recording notification, or return to the app and tap **停止后台采集并保存**. Wait for the saved notification. Both `video_recording.mp4` and `video_meta.txt` are stored in the app's external files directory under a timestamped folder ending in `_background`. IMU sampling is requested at **100 Hz** in both modes. The original round record button still starts ordinary foreground preview recording, which stops when the activity pauses.
+
+Background video feeds the Camera2 surface directly into the H.264 encoder and uses the MP4 orientation hint; its pixel buffer is not rotated by the activity's OpenGL renderer. When extracting images downstream, honor the MP4 rotation metadata to match the oriented dimensions/intrinsics in TXT. OIS settings and frame metadata are collected by the same camera code as ordinary recording; encoder timestamps continue to be matched to camera metadata.
+
+Allow camera permission and notifications. Background capture must be started from the visible app; there is no automatic recording on boot or process restart. Camera revocation/disconnection, storage failure or a system force-stop can interrupt a recording; force-stop/process termination cannot guarantee finalized MP4/TXT. Phone power-management settings may also restrict long recordings. The service shows capture failures rather than silently restarting the camera. See [Android camera foreground services](https://developer.android.com/develop/background-work/services/fgs/service-types#camera).
+
+Device acceptance check: record for 10 seconds with the app visible, 20 seconds on Home, then 20 seconds with the screen locked; stop from the notification. Check MP4 duration/playback and TXT frame/IMU timestamps across both transitions. Repeat returning to the app during recording and starting a second recording after saving. Build/unit tests do not substitute for this camera/lock-screen test on the target device.
 
 # Build in Android Studio
 Open the `android_app` directory, which contains `settings.gradle`, rather than the repository root.
@@ -74,6 +86,12 @@ magnetometer_accuracy=3
 ```
 
 Text files are larger than binary protobuf files. The existing calibration scripts below still expect legacy `.pb3` input and cannot directly read the new TXT format. Protobuf remains an internal message representation; new recordings no longer export binary `.pb3` metadata. Existing recordings are not converted automatically.
+
+The accelerometer/gyroscope request period is **10000 microseconds (100 Hz)**. Preview samples are not buffered for later recording. The synchronizer drains all ready samples on every sensor callback and bounds each sensor queue to 512 samples. Magnetometer interpolation waits at most 100 ms of sensor time; if no bracket is available, `magnetometer_uT=[]` and its bias array is empty. At stop, ready acceleration/gyro pairs are saved without waiting for magnetometer data. Unbracketed acceleration/gyro samples at startup, after a long sensor dropout, or at the recording end cannot be synchronized and are not fabricated.
+
+TXT data is flushed at startup and at least once per second while the writer is progressing. After the file closes the app refreshes Android's media index and shows its path, so it can appear over USB/MTP. The writer does not block sensor callbacks on a full queue: overload ends TXT recording with an explicit error instead of hanging; a failed/incomplete recording must not be used as a complete dataset. Unmatched camera metadata is saved even when more than 100 frames accumulate. New recording is blocked while the previous TXT is still closing.
+
+**A grey OIS switch describes Camera2 control availability for the currently opened camera, not whether the phone has mechanical stabilization.** Its summary explains whether the API exposes no control, OFF only, or ON only. OIS sample reporting is a separate capability. `CAMERA_INFO` now includes `camera_id`, `available_ois_modes` and `available_ois_data_modes`; `[0]` means only OFF is advertised, `[0, 1]` includes ON. Each `FRAME_METADATA` record includes `actual_optical_stabilization_mode`, `actual_video_stabilization_mode` and `actual_ois_data_mode`: -1 means not reported, 0 means OFF, 1 means ON (video stabilization can also report 2 for preview stabilization). The original camera-level stabilization booleans describe requested settings; the per-frame values describe the driver results. The application cannot force an OIS mode that the vendor does not expose through Camera2.
 
 # Read Legacy Protobuf File
 Examples on python scripts reading the protobuf file can be found the the [calibration](calibration) folder, for example [data2statistics.py](calibration/data2statistics.py). You need `protoc` to compile a python module first, this is already done in the calibration docker image.

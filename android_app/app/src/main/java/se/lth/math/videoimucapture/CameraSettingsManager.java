@@ -1,6 +1,7 @@
 package se.lth.math.videoimucapture;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Rect;
 import android.hardware.camera2.CameraCharacteristics;
@@ -38,10 +39,10 @@ public class CameraSettingsManager {
     private Map<Setting, CameraSetting> mCameraSettings;
     private boolean mInitialized = false;
 
-    public CameraSettingsManager(Activity activity) {
+    public CameraSettingsManager(Context activity) {
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(activity);
         CameraSetting.setSharedPreferences(preferences);
-        CameraSetting.setActivity(activity);
+        CameraSetting.setActivity(activity.getApplicationContext());
         //CameraSetting.setRestoreDefault(); // For DEBUG
         mCameraSettings = new HashMap<>();
     }
@@ -66,9 +67,6 @@ public class CameraSettingsManager {
     }
 
     public void updateSettings(CameraCharacteristics cameraCharacteristics) {
-        if (mInitialized) {
-            return;
-        }
         mCameraSettings.put(Setting.OIS,
                 new CameraSettingBoolean(
                         "ois",
@@ -117,8 +115,8 @@ public class CameraSettingsManager {
                     )
             );
         } else {
-            mCameraSettings.put(Setting.OIS_DATA,
-                    new CameraSettingBoolean("ois_data", null, 1, null, false)
+            mCameraSettings.put(Setting.DISTORTION_CORRECTION,
+                    new CameraSettingBoolean("distortion_correction", null, 1, null, false)
             );
         }
 
@@ -172,12 +170,12 @@ abstract class CameraSetting {
     protected Boolean mConfigurable;
     protected CaptureRequest.Key mRequestKey;
     protected static SharedPreferences mSharedPreferences;
-    protected static Activity mActivity;
+    protected static Context mActivity;
     protected static boolean mRestoreDefault = false;
     protected String mPrefKey;
 
     public static void setSharedPreferences(SharedPreferences preferences) {mSharedPreferences=preferences;};
-    public static void setActivity(Activity activity) {mActivity=activity;};
+    public static void setActivity(Context activity) {mActivity=activity;};
     public static void setRestoreDefault() {mRestoreDefault=true;};
 
     public void updatePreferenceScreen(PreferenceScreen screen) {
@@ -259,7 +257,7 @@ class CameraSettingBoolean extends CameraSetting {
     }
 
     public Boolean isOn() {
-        return mSharedPreferences.getBoolean(mPrefKey, mDefaultOn);
+        return mConfigurable ? mSharedPreferences.getBoolean(mPrefKey, mDefaultOn) : mDefaultOn;
     }
 
     @Override
@@ -279,6 +277,13 @@ class CameraSettingBoolean extends CameraSetting {
 
         ((SwitchPreferenceCompat) preference).setChecked(isOn());
         super.updatePreference(preference);
+        if (mPrefKey.equals("ois") || mPrefKey.equals("ois_data")) {
+            String feature = mPrefKey.equals("ois") ? "Optical stabilization" : "OIS sample reporting";
+            preference.setSummary(mConfigurable ? feature + ". Applied when returning to the camera."
+                    : !mRequestable ? feature + " is not exposed by this camera's Camera2 API."
+                    : mDefaultOn ? feature + " is always on; this camera cannot switch it off."
+                    : feature + " cannot be enabled through this camera's Camera2 API.");
+        }
     }
 }
 

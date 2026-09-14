@@ -7,6 +7,18 @@ import se.lth.math.videoimucapture.RecordingProtos.*;
 import static org.junit.Assert.*;
 
 public class RecordingTextFormatterTest {
+    @Test public void distinguishesOisSupportFromActualFrameState() {
+        String camera = RecordingTextFormatter.cameraInfo(CameraInfo.newBuilder()
+                .setCameraId("0").addAvailableOisModes(0).addAvailableOisDataModes(0).build());
+        assertTrue(camera.contains("camera_id=0\n"));
+        assertTrue(camera.contains("available_ois_modes=[0]\n"));
+        assertTrue(camera.contains("available_ois_data_modes=[0]\n"));
+        String frame = RecordingTextFormatter.frame(VideoFrameMetaData.newBuilder()
+                .setOpticalStabilizationMode(1).setVideoStabilizationMode(0).setOisDataMode(-1).build(), true);
+        assertTrue(frame.contains("actual_optical_stabilization_mode=1\n"));
+        assertTrue(frame.contains("actual_video_stabilization_mode=0\n"));
+        assertTrue(frame.contains("actual_ois_data_mode=-1\n"));
+    }
     @Test public void imuPreservesTimestampAndUsesDecimalInEveryLocale() {
         Locale previous = Locale.getDefault();
         try {

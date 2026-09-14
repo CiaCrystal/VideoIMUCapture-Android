@@ -260,11 +260,12 @@ public class CameraCaptureActivity extends AppCompatActivity {
             createCameraCaptureFragment();
         }
 
-        mImuManager.register();
+        if (!BackgroundCaptureService.isActive()) mImuManager.register();
         Log.d(TAG, "onResume complete: " + this);
     }
 
     public void initializeCamera() {
+        if (BackgroundCaptureService.isActive()) return;
         Log.d(TAG, "acquiring camera");
         if (mCamera2Proxy == null) {
             mCamera2Proxy = new Camera2Proxy(this, mCameraSettingsManager);
@@ -309,6 +310,10 @@ public class CameraCaptureActivity extends AppCompatActivity {
     }
 
     public void navigateToSettings(MenuItem unused) {
+        if (BackgroundCaptureService.isActive()) {
+            android.widget.Toast.makeText(this, "Stop background capture before changing camera settings", android.widget.Toast.LENGTH_LONG).show();
+            return;
+        }
         Fragment fragment = new CaptureSettings();
 
         getSupportFragmentManager().beginTransaction()
@@ -391,6 +396,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
                 return;
             }
             Camera2Proxy camera2proxy = activity.getmCamera2Proxy();
+            if (BackgroundCaptureService.isActive()) return;
             switch (what) {
                 case MSG_SET_SURFACE_TEXTURE:
                     if (camera2proxy == null) {

@@ -48,6 +48,9 @@ message CameraInfo {
   Size resolution = 11;
   Size pre_correction_active_array_size = 12; //SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE
   repeated float original_intrinsic_params = 13;
+  string camera_id = 15;
+  repeated int32 available_ois_modes = 16;
+  repeated int32 available_ois_data_modes = 17;
 
 }
 
@@ -74,6 +77,10 @@ message VideoFrameMetaData {
   }
   repeated OISSample OIS_samples =10;
   bool focus_locked = 11;
+  // Actual CaptureResult values: -1 = not reported, 0 = off, 1 = on.
+  int32 optical_stabilization_mode = 12;
+  int32 video_stabilization_mode = 13;
+  int32 ois_data_mode = 14;
 }
 
 message IMUInfo {

@@ -60,6 +60,13 @@ public class VideoEncoderCore {
     public VideoEncoderCore(int width, int height, int bitRate,
                             String outputFile, RecordingWriter metaRecorder)
             throws IOException {
+        this(width, height, bitRate, outputFile, metaRecorder, 0);
+    }
+
+    public VideoEncoderCore(int width, int height, int bitRate,
+                            String outputFile, RecordingWriter metaRecorder, int orientation)
+            throws IOException {
+        try {
         mBufferInfo = new MediaCodec.BufferInfo();
 
         MediaFormat format = MediaFormat.createVideoFormat(MIME_TYPE, width, height);
@@ -89,9 +96,14 @@ public class VideoEncoderCore {
         mMuxer = new MediaMuxer(outputFile,
                 MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
 
+        mMuxer.setOrientationHint(orientation);
         mTrackIndex = -1;
         mMuxerStarted = false;
         mFrameMetadataRecorder = metaRecorder;
+        } catch (IOException | RuntimeException error) {
+            try { release(); } catch (RuntimeException cleanup) { error.addSuppressed(cleanup); }
+            throw error;
+        }
     }
 
     /**
@@ -105,23 +117,21 @@ public class VideoEncoderCore {
      * Releases encoder resources.
      */
     public void release() {
-        if (VERBOSE) Log.d(TAG, "releasing encoder objects");
-        if (mEncoder != null) {
-            mEncoder.stop();
-            mEncoder.release();
-            mEncoder = null;
-        }
-        if (mMuxer != null) {
-            // stop() and release() throws an exception if you haven't fed it any data.  Keep track
-            //       of frames submitted, and don't call stop() if we haven't written anything.
-            if (mFrameNbr > 0) {
-                if (VERBOSE) Log.d(TAG, "Stopping Muxer since we have written " + mFrameNbr + " frames");
-                mMuxer.stop();
-                mMuxer.release();
+        try {
+            if (mEncoder != null) {
+                try { mEncoder.stop(); }
+                finally { mEncoder.release(); mEncoder = null; }
             }
-            mMuxer = null;
+        } finally {
+            try {
+                if (mMuxer != null) {
+                    try { if (mFrameNbr > 0) mMuxer.stop(); }
+                    finally { mMuxer.release(); mMuxer = null; }
+                }
+            } finally {
+                if (mInputSurface != null) { mInputSurface.release(); mInputSurface = null; }
+            }
         }
-
     }
 
     /**
@@ -144,7 +154,11 @@ public class VideoEncoderCore {
         }
 
         ByteBuffer[] encoderOutputBuffers = mEncoder.getOutputBuffers();
+        long eosDeadline = System.nanoTime() + 5_000_000_000L;
         while (true) {
+            if (endOfStream && System.nanoTime() > eosDeadline) {
+                throw new IllegalStateException("Timed out finalizing video encoder");
+            }
             int encoderStatus = mEncoder.dequeueOutputBuffer(mBufferInfo, TIMEOUT_USEC);
             if (encoderStatus == MediaCodec.INFO_TRY_AGAIN_LATER) {
                 // no output available yet
