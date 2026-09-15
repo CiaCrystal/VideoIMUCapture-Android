@@ -58,6 +58,7 @@ public class CameraCaptureFragment extends Fragment
 
     private boolean mRecordingEnabled;      // controls button state
     private android.widget.Button mBackgroundButton;
+    private boolean mStopRequested;
     private final Handler mBackgroundUi = new Handler(Looper.getMainLooper());
     private final Runnable mBackgroundPoll = new Runnable() {
         @Override public void run() {
@@ -140,23 +141,7 @@ public class CameraCaptureFragment extends Fragment
         mRecordingButton = view.findViewById(R.id.toggleRecording_button);
         mRecordingButton.setOnClickListener(this::clickToggleRecording);
         mBackgroundButton = view.findViewById(R.id.backgroundCapture_button);
-        mBackgroundButton.setOnClickListener(v -> {
-            if (BackgroundCaptureService.isActive()) {
-                requireContext().startService(new android.content.Intent(requireContext(), BackgroundCaptureService.class)
-                        .setAction(BackgroundCaptureService.STOP));
-                mBackgroundButton.setEnabled(false);
-                mBackgroundUi.removeCallbacks(mBackgroundPoll);
-                mBackgroundUi.post(mBackgroundPoll);
-            } else if (!mRecordingEnabled && !getsRecordingWriter().isRecording()) {
-                BackgroundCaptureService.startFrom((CameraCaptureActivity) requireActivity());
-                mGLView.setVisibility(View.INVISIBLE);
-                updateControls();
-                mBackgroundUi.removeCallbacks(mBackgroundPoll);
-                mBackgroundUi.post(mBackgroundPoll);
-            } else {
-                Toast.makeText(getContext(), "Stop the current recording first", Toast.LENGTH_SHORT).show();
-            }
-        });
+        mBackgroundButton.setOnClickListener(this::clickToggleRecording);
 
         mWarningButton = view.findViewById(R.id.OIS_warning_button);
         mWarningButton.setOnClickListener(this::clickWarning);
@@ -262,22 +247,24 @@ public class CameraCaptureFragment extends Fragment
      * onClick handler for "record" button.
      */
     public void clickToggleRecording(@SuppressWarnings("unused") View unused) {
-        if (BackgroundCaptureService.isActive()) return;
-        if (!mRecordingEnabled && getsRecordingWriter().isRecording()) {
-            Toast.makeText(getContext(), "Saving recording. Please wait.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        mRecordingEnabled = !mRecordingEnabled;
-        if (mRecordingEnabled) {
-            startRecording();
-            updateControls();
+        if (mStopRequested) return;
+        if (BackgroundCaptureService.isActive()) {
+            mStopRequested = true;
+            requireContext().startService(new android.content.Intent(requireContext(), BackgroundCaptureService.class)
+                    .setAction(BackgroundCaptureService.STOP));
         } else {
-            // disable button until recording finish
-            if (mRecordingButton != null){
-                mRecordingButton.setEnabled(false);
+            if (mRecordingEnabled || getsRecordingWriter().isRecording()) {
+                Toast.makeText(getContext(), "Saving recording. Please wait.", Toast.LENGTH_SHORT).show();
+                return;
             }
-            stopRecording();
+            // Both record controls use the service; pausing this Fragment only closes its preview.
+            BackgroundCaptureService.startFrom((CameraCaptureActivity) requireActivity());
+            if (!BackgroundCaptureService.isActive()) return;
+            mGLView.setVisibility(View.INVISIBLE);
         }
+        updateControls();
+        mBackgroundUi.removeCallbacks(mBackgroundPoll);
+        mBackgroundUi.post(mBackgroundPoll);
     }
 
     public void clickWarning(View view) {
@@ -420,21 +407,21 @@ public class CameraCaptureFragment extends Fragment
      */
     public void updateControls() {
         if (BackgroundCaptureService.isActive() && mCaptureResultText != null) {
-            mCaptureResultText.setText(BackgroundCaptureService.isReady()
+            mCaptureResultText.setText(mStopRequested ? "正在停止并保存，请稍候…" : BackgroundCaptureService.isReady()
                     ? "后台采集中：视频 + IMU 100 Hz。可按 Home 或锁屏，通知栏可停止保存。"
                     : "正在启动后台采集，请稍候…");
         }
         if (mBackgroundButton != null) {
             mBackgroundButton.setText(BackgroundCaptureService.isActive()
                     ? R.string.background_capture_stop : R.string.background_capture_start);
-            mBackgroundButton.setEnabled(!mRecordingEnabled);
+            mBackgroundButton.setEnabled(!mStopRequested && !mRecordingEnabled);
         }
         if (mRecordingButton != null) {
-            int id = mRecordingEnabled ?
+            int id = (BackgroundCaptureService.isActive() || mRecordingEnabled) ?
                     R.drawable.ic_stop_record : R.drawable.ic_start_record;
             Log.d(TAG, "DRAWING: " + id);
             mRecordingButton.setImageResource(id);
-            mRecordingButton.setEnabled(!BackgroundCaptureService.isActive());
+            mRecordingButton.setEnabled(!mStopRequested);
         }
 
         CameraSettingsManager cameraSettingsManager = getmCameraSettingsManager();
