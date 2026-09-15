@@ -17,7 +17,10 @@ import se.lth.math.videoimucapture.RecordingProtos.VideoFrameToTimestamp;
 import se.lth.math.videoimucapture.RecordingProtos.IMUData;
 import se.lth.math.videoimucapture.RecordingProtos.IMUInfo;
 import se.lth.math.videoimucapture.RecordingProtos.CameraInfo;
+import se.lth.math.videoimucapture.RecordingProtos.CaptureConfig;
+import se.lth.math.videoimucapture.RecordingProtos.ExperimentInfo;
 import se.lth.math.videoimucapture.RecordingProtos.MessageWrapper;
+import se.lth.math.videoimucapture.RecordingProtos.TouchEvent;
 
 import static java.lang.Math.abs;
 
@@ -159,6 +162,17 @@ public class RecordingWriter implements Runnable{
                 if (VERBOSE) LOG.fine("Got Camera Meta");
                 mFileStream.write(RecordingTextFormatter.cameraInfo(msg.getCameraMeta()));
                 break;
+            case CAPTURE_CONFIG:
+                mFileStream.write(RecordingTextFormatter.captureConfig(msg.getCaptureConfig()));
+                break;
+            case EXPERIMENT_INFO:
+                mFileStream.write(RecordingTextFormatter.experimentInfo(msg.getExperimentInfo()));
+                break;
+            case TOUCH_EVENT:
+                mFileStream.write(RecordingTextFormatter.touchEvent(msg.getTouchEvent()));
+                break;
+            case MSG_NOT_SET:
+                break;
         }
     }
 
@@ -230,6 +244,15 @@ public class RecordingWriter implements Runnable{
     }
     public void queueData(CameraInfo msg) {
         queueData(MessageWrapper.newBuilder().setCameraMeta(msg).build());
+    }
+    public void queueData(CaptureConfig msg) {
+        queueData(MessageWrapper.newBuilder().setCaptureConfig(msg).build());
+    }
+    public void queueData(ExperimentInfo msg) {
+        queueData(MessageWrapper.newBuilder().setExperimentInfo(msg).build());
+    }
+    public void queueData(TouchEvent msg) {
+        queueData(MessageWrapper.newBuilder().setTouchEvent(msg).build());
     }
 
 }

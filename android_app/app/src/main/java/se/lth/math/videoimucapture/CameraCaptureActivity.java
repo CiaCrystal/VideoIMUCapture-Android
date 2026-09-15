@@ -22,14 +22,17 @@ import androidx.fragment.app.Fragment;
 
 import android.graphics.SurfaceTexture;
 import android.os.Bundle;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Message;
+import android.os.SystemClock;
 import androidx.appcompat.app.AppCompatActivity;
 
 import android.util.Log;
 import android.util.Size;
 import android.view.LayoutInflater;
 import android.view.MenuItem;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 
@@ -153,6 +156,38 @@ public class CameraCaptureActivity extends AppCompatActivity {
         return mCamera2Proxy;
     }
     public FirebaseAnalytics getmFirebaseAnalytics() { return mFirebaseAnalytics; }
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_UP
+                || action == MotionEvent.ACTION_POINTER_DOWN
+                || action == MotionEvent.ACTION_POINTER_UP
+                || action == MotionEvent.ACTION_CANCEL) {
+            queueTouchEvent(event, action);
+        }
+        return super.dispatchTouchEvent(event);
+    }
+
+    private void queueTouchEvent(MotionEvent event, int action) {
+        if (!BackgroundCaptureService.isActive() && !sRecordingWriter.isRecording()) return;
+        int pointerIndex = event.getActionIndex();
+        long eventUptimeNs = Build.VERSION.SDK_INT >= 34
+                ? event.getEventTimeNanos() : event.getEventTime() * 1_000_000L;
+        long elapsedRealtimeOffsetNs = SystemClock.elapsedRealtimeNanos()
+                - SystemClock.uptimeMillis() * 1_000_000L;
+        RecordingProtos.TouchEvent touch = RecordingProtos.TouchEvent.newBuilder()
+                .setTimeNs(eventUptimeNs + elapsedRealtimeOffsetNs)
+                .setAction(action)
+                .setXPx(event.getX(pointerIndex))
+                .setYPx(event.getY(pointerIndex))
+                .setPressure(event.getPressure(pointerIndex))
+                .setSize(event.getSize(pointerIndex))
+                .setPointerId(event.getPointerId(pointerIndex))
+                .setTrialId(-1)
+                .build();
+        if (!BackgroundCaptureService.queueTouchEvent(touch)) sRecordingWriter.queueData(touch);
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {

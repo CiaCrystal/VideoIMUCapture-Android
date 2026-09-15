@@ -21,8 +21,15 @@ public final class BackgroundCaptureService extends Service {
     private static final int NOTIFICATION = 1001;
     private static volatile boolean active;
     private static volatile boolean ready;
+    private static volatile RecordingWriter activeWriter;
     public static boolean isActive() { return active; }
     public static boolean isReady() { return ready; }
+    public static boolean queueTouchEvent(RecordingProtos.TouchEvent event) {
+        RecordingWriter target = activeWriter;
+        if (target == null || !target.isRecording()) return false;
+        target.queueData(event);
+        return true;
+    }
     private final Handler main = new Handler(Looper.getMainLooper());
     private HandlerThread thread;
     private Handler worker;
@@ -104,6 +111,7 @@ public final class BackgroundCaptureService extends Service {
                 if (!stopping) stopCapture(error == null ? new IllegalStateException("TXT writer stopped") : error);
                 finish(error);
             }));
+            activeWriter = writer;
             CameraSettingsManager settings = new CameraSettingsManager(getApplicationContext());
             camera = new Camera2Proxy(getApplicationContext(), settings);
             camera.configureCamera();
@@ -164,6 +172,7 @@ public final class BackgroundCaptureService extends Service {
     private void finish(Exception error) {
         if (finished) return;
         finished = true;
+        activeWriter = null;
         if (failure == null) failure = error;
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         if (directory != null) MediaScannerConnection.scanFile(getApplicationContext(),

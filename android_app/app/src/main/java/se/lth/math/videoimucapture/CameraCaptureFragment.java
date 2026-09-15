@@ -15,6 +15,7 @@ import android.util.Log;
 import android.util.Size;
 import android.view.Display;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.View;
 import android.view.ViewGroup;
@@ -155,7 +156,7 @@ public class CameraCaptureFragment extends Fragment
         mGLView.setRenderer(mRenderer);
         mGLView.setRenderMode(GLSurfaceView.RENDERMODE_WHEN_DIRTY);
         mGLView.setTouchListener((event, width, height) -> {
-            if (getmCameraHandler() != null) {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN && getmCameraHandler() != null) {
                 getmCameraHandler().changeManualFocusPoint(
                         event.getX(), event.getY(), width, height);
             }
@@ -164,7 +165,6 @@ public class CameraCaptureFragment extends Fragment
         mCaptureResultText = view.findViewById(R.id.captureResult_text);
 
     }
-
 
     // updates mCameraPreviewWidth/Height
     public void setLayoutAspectRatio(Size cameraPreviewSize) {

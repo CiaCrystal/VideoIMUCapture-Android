@@ -45,6 +45,7 @@
         <SwitchPreferenceCompat
             app:key="ois"
             app:title="Enable OIS"
+            app:defaultValue="false"
             app:persistent="false"
             app:summary="Optical Image Stabilization" />
 

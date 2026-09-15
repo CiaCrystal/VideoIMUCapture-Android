@@ -26,14 +26,19 @@ public class SampleGLView extends GLSurfaceView implements View.OnTouchListener 
     @Override
     public boolean onTouch(View v, MotionEvent event) {
         final int actionMasked = event.getActionMasked();
-        if (actionMasked != MotionEvent.ACTION_DOWN) {
-            return false;
+        if (actionMasked != MotionEvent.ACTION_DOWN
+                && actionMasked != MotionEvent.ACTION_UP
+                && actionMasked != MotionEvent.ACTION_POINTER_DOWN
+                && actionMasked != MotionEvent.ACTION_POINTER_UP
+                && actionMasked != MotionEvent.ACTION_CANCEL) {
+            return true;
         }
 
         if (touchListener != null) {
             touchListener.onTouch(event, v.getWidth(), v.getHeight());
         }
-        return false;
+        // Consume DOWN so Android continues delivering the matching UP event.
+        return true;
     }
 
     public interface TouchListener {

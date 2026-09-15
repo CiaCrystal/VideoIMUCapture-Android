@@ -1,6 +1,6 @@
 # VideoIMUCapture 导出字段说明
 
-适用范围：当前项目导出的 UTF-8 `video_meta.txt`（文件头标记 `text format v1`）。依据当前源码、`protobuf/recording.proto` 和用户提供的 vivo X80 / Android 13 录制文件整理。
+适用范围：当前项目导出的 UTF-8 `video_meta.txt`（文件头标记 `text format v2`）。文件仍采用原有的 `[SECTION]` + `key=value` 纯文本格式；Protobuf 只作为 App 内部消息结构。
 
 本文以 **TXT 中实际出现的字段名** 为主，同时列出内部 Protobuf 字段和数据来源。这里只描述现有导出内容，不表示所有手机都能提供这些数据。
 
@@ -11,8 +11,13 @@
 | `[RECORDING]` | 录制起始系统时间 | 文件头一次 |
 | `[IMU_INFO]` | 陀螺仪、加速度计、磁力计的设备信息、分辨率及频率估计 | 开始录制时一次 |
 | `[IMU_DATA]` | 对齐到陀螺仪时间戳的 IMU 样本 | 持续重复 |
-| `[CAMERA_INFO]` | 相机 ID、内参、位姿参考、防抖能力与请求设置 | 开始录制时一次 |
-| `[FRAME_METADATA]` | 相机逐帧时间、曝光、焦距、实际防抖状态、OIS 样本 | 每条相机帧元数据 |
+| `[EXPERIMENT_INFO]` | 实验标签及 AF/OIS 实验模式；当前没有 UI 的标签为空 | 开始录制时一次 |
+| `[CAMERA_INFO]` | 相机、AF/OIS 静态能力、设备信息、内参与位姿 | 开始录制时一次 |
+| `[CAPTURE_CONFIG]` | 本次实际构建的 Camera2 请求配置 | 开始录制时一次 |
+| `[FRAME_METADATA]` | 相机逐帧时间、曝光、AF/Lens 状态、内参和样本计数 | 每条相机帧元数据 |
+| `[OIS_SAMPLE]` | 帧内 OIS 位移样本 | 设备提供时重复 |
+| `[LENS_INTRINSICS_SAMPLE]` | API 35+ 帧内镜头内参样本 | 设备提供时重复 |
+| `[TOUCH_EVENT]` | App 窗口内 DOWN/UP/多指/取消事件 | 录制中发生触摸时重复 |
 | `[FRAME_TIMESTAMP]` | 无法匹配相机元数据的编码帧时间戳 | 仅未匹配时 |
 | `[RECORDING_ERROR]` | TXT 写入队列过载，录制不完整 | 仅特定错误情况下 |
 
@@ -33,7 +38,10 @@
 | 所在区块 | `source` 的固定内容 | 含义 |
 |---|---|---|
 | `IMU_INFO`、`IMU_DATA` | `gyroscope,accelerometer,magnetometer` | IMU 数据类别；即使磁力计数组为空，该标签也保持不变 |
-| `CAMERA_INFO`、`FRAME_METADATA` | `camera` | Camera2 相机数据 |
+| `CAMERA_INFO`、`FRAME_METADATA`、`OIS_SAMPLE`、`LENS_INTRINSICS_SAMPLE` | `camera` | Camera2 相机数据 |
+| `CAPTURE_CONFIG` | `camera_request` | App 发送的 Camera2 请求配置 |
+| `EXPERIMENT_INFO` | `experiment` | 实验条件 |
+| `TOUCH_EVENT` | `touchscreen` | App 窗口触摸事件 |
 | `FRAME_TIMESTAMP` | `video_encoder` | 视频编码器数据 |
 
 `RECORDING` 和 `RECORDING_ERROR` 没有 `source`。`source` 是应用添加的标签，不是 Android 返回的设备名称，也不是 Protobuf 字段。
@@ -134,6 +142,16 @@
 | `camera_id` | `camera_id` | string | 应用打开的 Camera2 camera ID；不能一概当作物理传感器型号 |
 | `available_ois_modes` | `available_ois_modes` | int[] | `LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION`，相机报告的 OIS 控制模式 |
 | `available_ois_data_modes` | `available_ois_data_modes` | int[] | API 28+ 的 `STATISTICS_INFO_AVAILABLE_OIS_DATA_MODES`；未提供则为空 |
+| `available_ois_data_modes_key_available` | 同名 | bool | 区分“特征键不存在”和“键存在但模式数组为空” |
+| `available_af_modes` | `available_af_modes` | int[] | `CONTROL_AF_AVAILABLE_MODES`；0=OFF、1=AUTO、2=MACRO、3=CONTINUOUS_VIDEO、4=CONTINUOUS_PICTURE、5=EDOF |
+| `minimum_focus_distance_diopters` | 同名 | float / m⁻¹ | `LENS_INFO_MINIMUM_FOCUS_DISTANCE`；无值时输出空字符串，0 通常表示定焦镜头 |
+| `hyperfocal_distance_diopters` | 同名 | float / m⁻¹ | `LENS_INFO_HYPERFOCAL_DISTANCE`；无值时为空 |
+| `focus_distance_calibration` / `_name` | 同名 | int / string | 对焦距离标定级别的原始值及名称 |
+| `supports_af_state`、`supports_lens_state`、`supports_focus_range`、`supports_af_scene_change` | 同名 | bool | 目标逐帧 CaptureResult key 是否在当前相机的可用结果键列表中 |
+| `supports_lens_intrinsic_calibration`、`supports_lens_intrinsics_samples` | 同名 | bool | 普通逐帧内参及 API 35+ 帧内内参样本能力 |
+| `supports_ois_data`、`supports_ois_samples` | 同名 | bool | OIS 数据模式和 OIS 样本结果键能力 |
+| `device_manufacturer`、`device_model`、`android_version`、`android_api_level` | 同名 | string / int | Android `Build` 设备及系统信息 |
+| `camera_hardware_level` / `_name` | 同名 | int / string | Camera2 hardware level；无值时为空 |
 | `optical_image_stabilization` | `optical_image_stabilization` | bool | 应用配置的 OIS 开关状态；不是逐帧实际状态 |
 | `video_stabilization` | `video_stabilization` | bool | 应用配置的 DVS 开关状态 |
 | `distortion_correction` | `distortion_correction` | bool | 应用配置的畸变校正开关状态；没有对应的逐帧实际校正模式字段 |
@@ -189,38 +207,57 @@ OIS 能力数组中 `0=OFF`、`1=ON`：`[0, 1]` 可切换，`[1]` 仅暴露开�
 
 例如设置页选 1280×960，而 TXT 为 960×1280，可以是方向处理导致，不必然是分辨率配置错误。
 
+## 5.5 EXPERIMENT_INFO 与 CAPTURE_CONFIG
+
+`EXPERIMENT_INFO` 每次录制一条。当前 App 自动填写 `af_experiment_mode` 和 `ois_experiment_mode`；`experiment_id`、`trial_group`、`device_pose`、`support_condition`、`camera_covered`、`scene_type`、`target_type`、`notes` 尚无设置界面，因此保持为空，不会伪造实验标签。
+
+`CAPTURE_CONFIG` 每次录制一条，记录 `config_id`、`requested_af_mode`/`_name`、`requested_focus_distance_diopters`、请求的 OIS/OIS data/DVS/AE/AWB 模式、`requested_fps_range` 和 `capture_template`/`_name`。整型请求值为 `-1` 时表示该键未被请求或不可用；这组字段表示 App 请求，不能替代逐帧 CaptureResult 的实际状态。
+
 ## 6. FRAME_METADATA：逐帧元数据
 
 | TXT 字段 | 内部 `VideoFrameMetaData` 字段 | 类型 / 单位 | 来源与说明 |
 |---|---|---|---|
 | `matched_to_video` | 写入器派生 | bool | 是否成功与编码视频帧时间戳匹配 |
 | `time_ns` | `time_ns` | int64 / ns | `CaptureResult.SENSOR_TIMESTAMP`，相机帧曝光起始时间基准；不是整帧曝光的中心时刻 |
+| `sensor_timestamp_ns` | `time_ns` 的兼容别名 | int64 / ns | 与 `time_ns` 完全相同；推荐新分析代码使用该名称 |
 | `video_frame_number` | `frame_number` | int64 | 仅匹配成功时出现；替换为编码器提供的帧编号 |
-| `camera_frame_number` | `frame_number` | int64 | 仅未匹配时出现；保留 `CaptureResult.getFrameNumber()`，不能当作视频索引 |
+| `camera_frame_number` | `camera_frame_number` | int64 | 所有相机帧均出现；保留 `CaptureResult.getFrameNumber()`，并作为高频样本的父键 |
 | `exposure_time_ns` | `exposure_time_ns` | int64 / ns | `SENSOR_EXPOSURE_TIME`，曝光时长 |
 | `frame_duration_ns` | `frame_duration_ns` | int64 / ns | `SENSOR_FRAME_DURATION`，相机报告的帧周期；不是曝光时长 |
 | `frame_readout_ns` | `frame_readout_ns` | int64 / ns | `SENSOR_ROLLING_SHUTTER_SKEW`，首行到末行曝光开始的时间差；不是文件写入耗时 |
+| `rolling_shutter_skew_ns` | `frame_readout_ns` 的兼容别名 | int64 / ns | 与 `frame_readout_ns` 相同 |
 | `iso` | `iso` | int / ISO | `SENSOR_SENSITIVITY`，感光度 |
 | `focal_length_mm` | `focal_length_mm` | float / mm | `LENS_FOCAL_LENGTH`，镜头焦距 |
+| `aperture` | `aperture` | float / f-number | `LENS_APERTURE` |
 | `estimated_focal_length_px` | `est_focal_length_pix` | float / px | 项目根据焦距、对焦距离、物理尺寸、裁剪区域和输出尺寸估算的像素焦距；不是逐帧标定得到的完整 K 矩阵 |
+| `af_mode` / `_name` | `af_mode` | int / string | `CONTROL_AF_MODE` 原始值及名称 |
+| `af_state` / `_name` | `af_state` | int / string | `CONTROL_AF_STATE`；包括 INACTIVE、PASSIVE_SCAN、PASSIVE_FOCUSED、ACTIVE_SCAN、FOCUSED_LOCKED、NOT_FOCUSED_LOCKED、PASSIVE_UNFOCUSED |
+| `lens_state` / `_name` | `lens_state` | int / string | `LENS_STATE`；STATIONARY 或 MOVING |
 | `focus_distance_diopters` | `focus_distance_diopters` | float / m⁻¹ | `LENS_FOCUS_DISTANCE`；标定可靠时可近似按距离米数 `1/value` 理解；0 通常对应无限远，但也可能是未赋值 |
 | `focus_locked` | `focus_locked` | bool | 当前代码仅判断 AF 状态不是 `ACTIVE_SCAN` 或 `PASSIVE_SCAN`；true 不保证已成功合焦，也不严格等价于 Camera2 的 FOCUSED_LOCKED |
+| `focus_range_diopters` | `focus_range_diopters` | float[2] | `LENS_FOCUS_RANGE`；不支持时为 `[]` |
+| `af_scene_change` / `_name` | `af_scene_change` | int / string | API 28+ `CONTROL_AF_SCENE_CHANGE`；未报告时为 -1/NOT_REPORTED |
+| `af_regions` | `af_regions` | int[][5] | 每项 `[left,top,right,bottom,weight]`，来自 `CONTROL_AF_REGIONS` |
+| `lens_intrinsic_calibration_fx_fy_cx_cy_s` | `lens_intrinsic_calibration` | float[5] | 当前 CaptureResult 的 `LENS_INTRINSIC_CALIBRATION`，与静态 CameraCharacteristics 内参分开保存 |
 | `actual_optical_stabilization_mode` | `optical_stabilization_mode` | int | `CaptureResult.LENS_OPTICAL_STABILIZATION_MODE`；-1 未报告、0 关闭、1 开启 |
 | `actual_video_stabilization_mode` | `video_stabilization_mode` | int | `CONTROL_VIDEO_STABILIZATION_MODE`；-1 未报告、0 关闭、1 开启、2 预览防抖模式 |
 | `actual_ois_data_mode` | `ois_data_mode` | int | API 28+ 的 `STATISTICS_OIS_DATA_MODE`；-1 未报告、0 关闭、1 开启 |
 | `ois_sample_count` | `OIS_samples` 数量派生 | int | 该帧包含的 OIS 样本数；不是 IMU 样本数 |
+| `lens_intrinsics_sample_count` | `lens_intrinsics_samples` 数量派生 | int | 该帧包含的 API 35+ 帧内镜头内参样本数 |
 
 曝光、读取时序与镜头状态的 API 定义见 [CaptureResult](https://developer.android.com/reference/android/hardware/camera2/CaptureResult)。应用没有保存完整 CaptureResult，只有表中明确列出的字段。
 
-## 7. OIS samples：光学防抖位移样本
+## 7. OIS_SAMPLE：光学防抖位移样本
 
-OIS 样本嵌在对应 `[FRAME_METADATA]` 中。若 `ois_sample_count=N`，索引 `i` 从 0 到 N−1；每一帧重新从 0 开始编号。
+OIS 样本作为独立 `[OIS_SAMPLE]` 区块输出。若父帧的 `ois_sample_count=N`，`sample_index` 从 0 到 N−1；每一帧重新从 0 开始编号。
 
-| TXT 字段模板 | 内部字段 | 类型 / 单位 | 含义 |
+| TXT 字段 | 内部字段 | 类型 / 单位 | 含义 |
 |---|---|---|---|
-| `camera_ois_sample_{i}_time_ns` | `OIS_samples[i].time_ns` | int64 / ns | `OisSample.getTimestamp()`，该 OIS 样本的时间戳 |
-| `camera_ois_sample_{i}_x_shift_px` | `OIS_samples[i].x_shift` | float / px | x 方向的光学防抖图像位移，经项目缩放和方向变换 |
-| `camera_ois_sample_{i}_y_shift_px` | `OIS_samples[i].y_shift` | float / px | y 方向的位移，经同样处理 |
+| `parent_camera_frame_number` | 父帧派生 | int64 | 对应 `[FRAME_METADATA].camera_frame_number` |
+| `sample_index` | 数组索引 | int | 父帧内样本编号 |
+| `time_ns` | `OIS_samples[i].time_ns` | int64 / ns | `OisSample.getTimestamp()`，该 OIS 样本的时间戳 |
+| `x_shift_px` | `OIS_samples[i].x_shift` | float / px | x 方向的光学防抖图像位移，经项目缩放和方向变换 |
+| `y_shift_px` | `OIS_samples[i].y_shift` | float / px | y 方向的位移，经同样处理 |
 
 数据来源为 API 28+ 的 `CaptureResult.STATISTICS_OIS_SAMPLES`。Android 原始 OIS 位移以像素表达；本项目不是输出机械镜片移动的毫米数，也不是角速度。参考 [OisSample](https://developer.android.com/reference/android/hardware/camera2/params/OisSample)。
 
@@ -243,12 +280,20 @@ OIS 样本嵌在对应 `[FRAME_METADATA]` 中。若 `ois_sample_count=N`，索�
 |---|---|---|
 | 数据入口 | SensorManager | Camera2 CaptureResult |
 | 物理量 / 表达 | 三轴角速度，rad/s | 光学防抖造成的图像位移，px |
-| 所在区块 | `IMU_DATA` | `FRAME_METADATA` 内部 |
+| 所在区块 | `IMU_DATA` | 独立 `OIS_SAMPLE` |
 | 时间组织 | 每条 IMU 记录一个陀螺仪参考时间 | 每帧可以包含多个带独立时间戳的 OIS 样本 |
 | 是否经过项目空间变换 | 保持设备传感器坐标轴 | 按相机方向旋转并缩放 |
 | 能否互相替代 | 不能仅凭角速度直接得到完整 OIS 位移 | 不能将像素位移直接当作陀螺仪角速度 |
 
 OIS 已开启不意味着 OIS samples 可读取。`ois_sample_count=0` 不表示防抖位移为零，更不表示 OIS 已关闭；应结合能力数组及实际状态判断。
+
+### 7.3 LENS_INTRINSICS_SAMPLE
+
+Android API 35+ 且相机提供 `STATISTICS_LENS_INTRINSICS_SAMPLES` 时，每个样本输出一条独立区块，包含 `parent_camera_frame_number`、`sample_index`、`time_ns`、`fx`、`fy`、`cx`、`cy`、`skew`。父帧用 `lens_intrinsics_sample_count` 标明数量；不支持时计数为 0，不输出样本区块。
+
+### 7.4 TOUCH_EVENT
+
+录制期间 App 窗口内的 DOWN、UP、POINTER_DOWN、POINTER_UP 和 CANCEL 事件分别输出一条，字段包括 `time_ns`、`action`/`action_name`、`x_px`、`y_px`、`pressure`、`size`、`pointer_id`、`target_label` 和 `trial_id`。时间从输入事件的 uptime 时钟换算到 elapsed realtime，以便与 `REALTIME` Camera 时间和 SensorEvent 时间对齐。当前没有 target/trial 标注界面，因此 `target_label` 为空、`trial_id=-1`。
 
 ## 8. FRAME_TIMESTAMP：未匹配的编码帧
 

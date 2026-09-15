@@ -48,32 +48,81 @@ public class RecordingTextFormatterTest {
 
     @Test public void frameRetainsExposureFocusAndAllOisSamples() {
         VideoFrameMetaData frame = VideoFrameMetaData.newBuilder().setTimeNs(1234567890L)
-                .setFrameNumber(17).setExposureTimeNs(5000000).setFrameDurationNs(33333333)
+                .setFrameNumber(17).setCameraFrameNumber(99).setCameraFrameNumberAvailable(true)
+                .setExposureTimeNs(5000000).setFrameDurationNs(33333333)
                 .setFrameReadoutNs(10000000).setIso(200).setFocalLengthMm(4.2f)
-                .setEstFocalLengthPix(900.5f).setFocusDistanceDiopters(0.5f).setFocusLocked(true)
+                .setAperture(1.8f).setEstFocalLengthPix(900.5f).setFocusDistanceDiopters(0.5f)
+                .setFocusLocked(true).setAfMode(4).setAfState(1).setLensState(1)
+                .addFocusRangeDiopters(0.25f).addFocusRangeDiopters(0.75f).setAfSceneChange(1)
+                .addAfRegions(VideoFrameMetaData.AFRegion.newBuilder().setLeft(1).setTop(2)
+                        .setRight(3).setBottom(4).setWeight(999))
+                .addAllLensIntrinsicCalibration(Arrays.asList(800f, 801f, 400f, 300f, 0f))
                 .addOISSamples(VideoFrameMetaData.OISSample.newBuilder().setTimeNs(1234567800L)
                         .setXShift(-0.25f).setYShift(0.5f))
                 .addOISSamples(VideoFrameMetaData.OISSample.newBuilder().setTimeNs(1234567900L)
-                        .setXShift(0.125f).setYShift(-0.75f)).build();
+                        .setXShift(0.125f).setYShift(-0.75f))
+                .addLensIntrinsicsSamples(VideoFrameMetaData.LensIntrinsicsSample.newBuilder()
+                        .setTimeNs(1234567850L)
+                        .addAllIntrinsics(Arrays.asList(800f, 801f, 400.5f, 300.5f, 0f))).build();
         String text = RecordingTextFormatter.frame(frame, true);
-        for (String line : new String[]{"source=camera", "video_frame_number=17", "time_ns=1234567890",
+        for (String line : new String[]{"source=camera", "video_frame_number=17", "camera_frame_number=99",
+                "time_ns=1234567890", "sensor_timestamp_ns=1234567890",
                 "exposure_time_ns=5000000", "frame_duration_ns=33333333", "frame_readout_ns=10000000",
-                "iso=200", "focal_length_mm=4.2", "estimated_focal_length_px=900.5",
-                "focus_distance_diopters=0.5", "focus_locked=true", "ois_sample_count=2",
-                "camera_ois_sample_0_time_ns=1234567800", "camera_ois_sample_0_x_shift_px=-0.25",
-                "camera_ois_sample_0_y_shift_px=0.5", "camera_ois_sample_1_time_ns=1234567900",
-                "camera_ois_sample_1_x_shift_px=0.125", "camera_ois_sample_1_y_shift_px=-0.75"}) {
+                "rolling_shutter_skew_ns=10000000", "iso=200", "focal_length_mm=4.2", "aperture=1.8",
+                "estimated_focal_length_px=900.5", "af_mode=4", "af_mode_name=CONTINUOUS_PICTURE",
+                "af_state=1", "af_state_name=PASSIVE_SCAN", "lens_state=1", "lens_state_name=MOVING",
+                "focus_distance_diopters=0.5", "focus_locked=true", "focus_range_diopters=[0.25, 0.75]",
+                "af_scene_change=1", "af_scene_change_name=DETECTED", "af_regions=[[1, 2, 3, 4, 999]]",
+                "lens_intrinsic_calibration_fx_fy_cx_cy_s=[800, 801, 400, 300, 0]",
+                "ois_sample_count=2", "lens_intrinsics_sample_count=1", "sample_index=0",
+                "parent_camera_frame_number=99", "x_shift_px=-0.25", "y_shift_px=0.5",
+                "fx=800", "fy=801", "cx=400.5", "cy=300.5", "skew=0"}) {
             assertTrue(line, text.contains(line + "\n"));
         }
+        assertEquals(2, text.split("\\[OIS_SAMPLE\\]", -1).length - 1);
+        assertEquals(1, text.split("\\[LENS_INTRINSICS_SAMPLE\\]", -1).length - 1);
         String unmatched = RecordingTextFormatter.frame(frame, false);
         assertTrue(unmatched.contains("matched_to_video=false\n"));
-        assertTrue(unmatched.contains("camera_frame_number=17\n"));
+        assertTrue(unmatched.contains("camera_frame_number=99\n"));
         assertFalse(unmatched.contains("video_frame_number="));
+    }
+
+    @Test public void formatsCaptureExperimentAndTouchCollections() {
+        String config = RecordingTextFormatter.captureConfig(CaptureConfig.newBuilder()
+                .setConfigId(0).setRequestedAfMode(3).setRequestedFocusDistanceAvailable(true)
+                .setRequestedFocusDistanceDiopters(0.5f).setRequestedOpticalStabilizationMode(0)
+                .setRequestedOisDataMode(-1).setRequestedVideoStabilizationMode(0)
+                .setRequestedAeMode(1).setRequestedAwbMode(1).addRequestedFpsRange(30)
+                .addRequestedFpsRange(30).setCaptureTemplate(3).build());
+        assertTrue(config.contains("[CAPTURE_CONFIG]\n"));
+        assertTrue(config.contains("requested_af_mode_name=CONTINUOUS_VIDEO\n"));
+        assertTrue(config.contains("requested_fps_range=[30, 30]\n"));
+        assertTrue(config.contains("capture_template_name=TEMPLATE_RECORD\n"));
+
+        String experiment = RecordingTextFormatter.experimentInfo(ExperimentInfo.newBuilder()
+                .setAfExperimentMode("CONTINUOUS_VIDEO").setOisExperimentMode("OFF").build());
+        assertTrue(experiment.contains("[EXPERIMENT_INFO]\n"));
+        assertTrue(experiment.contains("af_experiment_mode=CONTINUOUS_VIDEO\n"));
+        assertTrue(experiment.contains("camera_covered=\n"));
+
+        String touch = RecordingTextFormatter.touchEvent(TouchEvent.newBuilder().setTimeNs(123L)
+                .setAction(0).setXPx(12.5f).setYPx(42.5f).setPressure(0.75f).setSize(0.1f)
+                .setPointerId(2).setTargetLabel("KEY_5").setTrialId(37).build());
+        for (String line : new String[]{"[TOUCH_EVENT]", "time_ns=123", "action=0", "action_name=DOWN",
+                "x_px=12.5", "y_px=42.5", "pressure=0.75", "size=0.1", "pointer_id=2",
+                "target_label=KEY_5", "trial_id=37"}) assertTrue(line, touch.contains(line + "\n"));
     }
 
     @Test public void cameraAndSensorInfoRetainCalibrationAndSource() {
         CameraInfo camera = CameraInfo.newBuilder().addIntrinsicParams(100.5f)
                 .addOriginalIntrinsicParams(200.5f).addDistortionParams(0.0000001f)
+                .addAvailableAfModes(4).setMinimumFocusDistanceAvailable(true)
+                .setMinimumFocusDistanceDiopters(10f).setHyperfocalDistanceAvailable(true)
+                .setHyperfocalDistanceDiopters(0.2f).setFocusDistanceCalibrationAvailable(true)
+                .setFocusDistanceCalibration(2).setSupportsAfState(true).setSupportsLensState(true)
+                .setSupportsFocusRange(true).setSupportsLensIntrinsicCalibration(true)
+                .setDeviceManufacturer("Google").setDeviceModel("Pixel").setAndroidVersion("15")
+                .setAndroidApiLevel(35).setCameraHardwareLevelAvailable(true).setCameraHardwareLevel(1)
                 .setOpticalImageStabilization(true).setVideoStabilization(true).setDistortionCorrection(true)
                 .setSensorOrientation(90).setFocusCalibrationValue(2).setTimestampSourceValue(1)
                 .setLensPoseReferenceValue(1).addLensPoseRotation(1.0f).addLensPoseTranslation(0.01f)
@@ -83,6 +132,13 @@ public class RecordingTextFormatterTest {
         for (String line : new String[]{"intrinsic_params_fx_fy_cx_cy_s=[100.5]",
                 "original_intrinsic_params_fx_fy_cx_cy_s=[200.5]", "distortion_params_k1_k2_k3_k4_k5=[0.0000001]",
                 "optical_image_stabilization=true", "video_stabilization=true", "distortion_correction=true",
+                "available_af_modes=[4]", "minimum_focus_distance_diopters=10",
+                "hyperfocal_distance_diopters=0.2", "focus_distance_calibration=2",
+                "focus_distance_calibration_name=CALIBRATED", "supports_af_state=true",
+                "supports_lens_state=true", "supports_focus_range=true",
+                "supports_lens_intrinsic_calibration=true", "device_manufacturer=Google",
+                "device_model=Pixel", "android_version=15", "android_api_level=35",
+                "camera_hardware_level=1", "camera_hardware_level_name=FULL",
                 "sensor_orientation_degrees=90", "focus_calibration=2", "timestamp_source=1",
                 "lens_pose_reference=1", "lens_pose_rotation_x_y_z_w=[1]", "lens_pose_translation_m=[0.01]",
                 "resolution_width_px=1920", "resolution_height_px=1080",

@@ -51,7 +51,68 @@ message CameraInfo {
   string camera_id = 15;
   repeated int32 available_ois_modes = 16;
   repeated int32 available_ois_data_modes = 17;
+  repeated int32 available_af_modes = 18;
+  float minimum_focus_distance_diopters = 19;
+  float hyperfocal_distance_diopters = 20;
+  int32 focus_distance_calibration = 21;
+  bool minimum_focus_distance_available = 22;
+  bool hyperfocal_distance_available = 23;
+  bool focus_distance_calibration_available = 24;
+  bool supports_af_state = 25;
+  bool supports_lens_state = 26;
+  bool supports_focus_range = 27;
+  bool supports_af_scene_change = 28;
+  bool supports_lens_intrinsic_calibration = 29;
+  bool supports_lens_intrinsics_samples = 30;
+  bool supports_ois_data = 31;
+  bool supports_ois_samples = 32;
+  bool available_ois_data_modes_key_available = 33;
+  string device_manufacturer = 34;
+  string device_model = 35;
+  string android_version = 36;
+  int32 android_api_level = 37;
+  int32 camera_hardware_level = 38;
+  bool camera_hardware_level_available = 39;
+}
 
+message CaptureConfig {
+  int32 config_id = 1;
+  int32 requested_af_mode = 2;
+  float requested_focus_distance_diopters = 3;
+  bool requested_focus_distance_available = 4;
+  int32 requested_optical_stabilization_mode = 5;
+  int32 requested_ois_data_mode = 6;
+  int32 requested_video_stabilization_mode = 7;
+  int32 requested_ae_mode = 8;
+  int32 requested_awb_mode = 9;
+  repeated int32 requested_fps_range = 10; // [min, max]
+  int32 capture_template = 11;
+}
+
+message ExperimentInfo {
+  string experiment_id = 1;
+  string trial_group = 2;
+  string device_pose = 3;
+  string support_condition = 4;
+  string af_experiment_mode = 5;
+  string ois_experiment_mode = 6;
+  bool camera_covered = 7;
+  bool camera_covered_available = 8;
+  string scene_type = 9;
+  string target_type = 10;
+  string notes = 11;
+}
+
+message TouchEvent {
+  int64 time_ns = 1;
+  int32 action = 2;
+  float x_px = 3;
+  float y_px = 4;
+  float pressure = 5;
+  float size = 6;
+  int32 pointer_id = 7;
+  string target_label = 8;
+  int64 trial_id = 9;
 }
 
 message VideoFrameToTimestamp{
@@ -81,6 +142,31 @@ message VideoFrameMetaData {
   int32 optical_stabilization_mode = 12;
   int32 video_stabilization_mode = 13;
   int32 ois_data_mode = 14;
+  // Kept separate because frame_number is replaced by the encoded-video index after matching.
+  int64 camera_frame_number = 15;
+  int32 af_mode = 16;
+  int32 af_state = 17;
+  int32 lens_state = 18;
+  repeated float focus_range_diopters = 19; // [near, far]
+  int32 af_scene_change = 20;
+
+  message AFRegion {
+    int32 left = 1;
+    int32 top = 2;
+    int32 right = 3;
+    int32 bottom = 4;
+    int32 weight = 5;
+  }
+  repeated AFRegion af_regions = 21;
+  repeated float lens_intrinsic_calibration = 22; // fx, fy, cx, cy, skew
+
+  message LensIntrinsicsSample {
+    int64 time_ns = 1;
+    repeated float intrinsics = 2; // fx, fy, cx, cy, skew
+  }
+  repeated LensIntrinsicsSample lens_intrinsics_samples = 23;
+  float aperture = 24;
+  bool camera_frame_number_available = 25;
 }
 
 message IMUInfo {
@@ -124,6 +210,9 @@ message VideoCaptureData {
 
   repeated IMUData imu = 4;
   repeated VideoFrameMetaData video_meta = 5;
+  repeated CaptureConfig capture_config = 6;
+  repeated ExperimentInfo experiment_info = 7;
+  repeated TouchEvent touch_event = 8;
 }
 
 message MessageWrapper {
@@ -133,5 +222,8 @@ message MessageWrapper {
     IMUInfo imu_meta = 3;
     VideoFrameMetaData frame_meta = 4;
     VideoFrameToTimestamp frame_time = 5;
+    CaptureConfig capture_config = 6;
+    ExperimentInfo experiment_info = 7;
+    TouchEvent touch_event = 8;
   }
 }

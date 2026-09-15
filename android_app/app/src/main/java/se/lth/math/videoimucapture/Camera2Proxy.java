@@ -14,6 +14,7 @@ import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.CaptureResult;
 import android.hardware.camera2.TotalCaptureResult;
+import android.hardware.camera2.params.LensIntrinsicsSample;
 import android.hardware.camera2.params.MeteringRectangle;
 import android.hardware.camera2.params.OisSample;
 import android.hardware.camera2.params.OutputConfiguration;
@@ -24,14 +25,18 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
 
 import androidx.preference.PreferenceManager;
 import android.util.Log;
+import android.util.Pair;
+import android.util.Range;
 import android.util.Size;
 import android.view.Surface;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 
 import static java.lang.Math.abs;
 
@@ -77,6 +82,7 @@ public class Camera2Proxy {
     private SurfaceTexture mPreviewSurfaceTexture = null;
 
     private RecordingWriter mRecordingWriter = null;
+    private boolean mRecordingInfoWritten = false;
 
     // https://stackoverflow.com/questions/3786825/volatile-boolean-vs-atomicboolean
     private volatile boolean mRecordingMetadata = false;
@@ -118,7 +124,8 @@ public class Camera2Proxy {
     public void startRecordingCaptureResult(RecordingWriter recordingWriter) {
         mRecordingWriter = recordingWriter;
         mRecordingMetadata = true;
-        writeCameraInfo();
+        mRecordingInfoWritten = false;
+        writeRecordingInfoIfReady();
     }
 
     public void stopRecordingCaptureResult() {
@@ -235,6 +242,7 @@ public class Camera2Proxy {
                             if (mClosing) { session.close(); return; }
                             mCaptureSession = session;
                             mPreviewRequest = mPreviewRequestBuilder.build();
+                            writeRecordingInfoIfReady();
                             startPreview();
                             if (mReadyCallback != null) mReadyCallback.run();
                         }
@@ -445,20 +453,70 @@ public class Camera2Proxy {
         }
     }
 
+    private synchronized void writeRecordingInfoIfReady() {
+        if (!mRecordingMetadata || mRecordingInfoWritten || mRecordingWriter == null
+                || mCameraCharacteristics == null || mPreviewRequest == null) {
+            return;
+        }
+        mRecordingInfoWritten = true;
+        writeExperimentInfo();
+        writeCameraInfo();
+        writeCaptureConfig();
+    }
+
     public void writeCameraInfo() {
 
         RecordingProtos.CameraInfo.Builder metaBuilder = RecordingProtos.CameraInfo.newBuilder()
                 .setOpticalImageStabilization(mCameraSettingsManager.OISEnabled())
                 .setVideoStabilization(mCameraSettingsManager.DVSEnabled())
                 .setDistortionCorrection(mCameraSettingsManager.DistortionCorrectionEnabled())
-                .setSensorOrientation(mCameraCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION));
+                .setSensorOrientation(mCameraCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION))
+                .setDeviceManufacturer(Build.MANUFACTURER == null ? "" : Build.MANUFACTURER)
+                .setDeviceModel(Build.MODEL == null ? "" : Build.MODEL)
+                .setAndroidVersion(Build.VERSION.RELEASE == null ? "" : Build.VERSION.RELEASE)
+                .setAndroidApiLevel(Build.VERSION.SDK_INT);
 
         metaBuilder.setCameraId(mCameraIdStr);
         int[] oisModes = mCameraCharacteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION);
         if (oisModes != null) for (int mode : oisModes) metaBuilder.addAvailableOisModes(mode);
+        int[] afModes = mCameraCharacteristics.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES);
+        if (afModes != null) for (int mode : afModes) metaBuilder.addAvailableAfModes(mode);
+        Float minimumFocusDistance = mCameraCharacteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE);
+        if (minimumFocusDistance != null) {
+            metaBuilder.setMinimumFocusDistanceAvailable(true)
+                    .setMinimumFocusDistanceDiopters(minimumFocusDistance);
+        }
+        Float hyperfocalDistance = mCameraCharacteristics.get(CameraCharacteristics.LENS_INFO_HYPERFOCAL_DISTANCE);
+        if (hyperfocalDistance != null) {
+            metaBuilder.setHyperfocalDistanceAvailable(true)
+                    .setHyperfocalDistanceDiopters(hyperfocalDistance);
+        }
         if (Build.VERSION.SDK_INT >= 28) {
             int[] dataModes = mCameraCharacteristics.get(CameraCharacteristics.STATISTICS_INFO_AVAILABLE_OIS_DATA_MODES);
             if (dataModes != null) for (int mode : dataModes) metaBuilder.addAvailableOisDataModes(mode);
+            List<CameraCharacteristics.Key<?>> characteristicKeys = mCameraCharacteristics.getKeys();
+            metaBuilder.setAvailableOisDataModesKeyAvailable(characteristicKeys != null
+                    && characteristicKeys.contains(CameraCharacteristics.STATISTICS_INFO_AVAILABLE_OIS_DATA_MODES));
+        }
+
+        List<CaptureResult.Key<?>> resultKeys = mCameraCharacteristics.getAvailableCaptureResultKeys();
+        metaBuilder.setSupportsAfState(hasResultKey(resultKeys, CaptureResult.CONTROL_AF_STATE))
+                .setSupportsLensState(hasResultKey(resultKeys, CaptureResult.LENS_STATE))
+                .setSupportsFocusRange(hasResultKey(resultKeys, CaptureResult.LENS_FOCUS_RANGE))
+                .setSupportsLensIntrinsicCalibration(
+                        hasResultKey(resultKeys, CaptureResult.LENS_INTRINSIC_CALIBRATION));
+        if (Build.VERSION.SDK_INT >= 28) {
+            metaBuilder.setSupportsAfSceneChange(hasResultKey(resultKeys, CaptureResult.CONTROL_AF_SCENE_CHANGE))
+                    .setSupportsOisData(hasResultKey(resultKeys, CaptureResult.STATISTICS_OIS_DATA_MODE))
+                    .setSupportsOisSamples(hasResultKey(resultKeys, CaptureResult.STATISTICS_OIS_SAMPLES));
+        }
+        if (Build.VERSION.SDK_INT >= 35) {
+            metaBuilder.setSupportsLensIntrinsicsSamples(supportsLensIntrinsicsSamples(resultKeys));
+        }
+
+        Integer hardwareLevel = mCameraCharacteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL);
+        if (hardwareLevel != null) {
+            metaBuilder.setCameraHardwareLevelAvailable(true).setCameraHardwareLevel(hardwareLevel);
         }
 
         Size resolution = mCameraSettingsManager.getVideoSize();
@@ -482,6 +540,7 @@ public class Camera2Proxy {
         Integer focus_cal = mCameraCharacteristics.get(CameraCharacteristics.LENS_INFO_FOCUS_DISTANCE_CALIBRATION);
         if (focus_cal != null) {
             metaBuilder.setFocusCalibrationValue(focus_cal);
+            metaBuilder.setFocusDistanceCalibrationAvailable(true).setFocusDistanceCalibration(focus_cal);
         }
 
         float[] lensTranslation = mCameraCharacteristics.get(CameraCharacteristics.LENS_POSE_TRANSLATION);
@@ -524,12 +583,74 @@ public class Camera2Proxy {
 
     }
 
+    private static boolean hasResultKey(List<CaptureResult.Key<?>> keys, CaptureResult.Key<?> key) {
+        return keys != null && keys.contains(key);
+    }
+
+    @RequiresApi(35)
+    private static boolean supportsLensIntrinsicsSamples(List<CaptureResult.Key<?>> keys) {
+        return hasResultKey(keys, CaptureResult.STATISTICS_LENS_INTRINSICS_SAMPLES);
+    }
+
+    private static int valueOrNotReported(Integer value) {
+        return value == null ? -1 : value;
+    }
+
+    private void writeCaptureConfig() {
+        RecordingProtos.CaptureConfig.Builder builder = RecordingProtos.CaptureConfig.newBuilder()
+                .setConfigId(0)
+                .setCaptureTemplate(CameraDevice.TEMPLATE_RECORD)
+                .setRequestedAfMode(valueOrNotReported(mPreviewRequest.get(CaptureRequest.CONTROL_AF_MODE)))
+                .setRequestedOpticalStabilizationMode(valueOrNotReported(
+                        mPreviewRequest.get(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE)))
+                .setRequestedVideoStabilizationMode(valueOrNotReported(
+                        mPreviewRequest.get(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE)))
+                .setRequestedAeMode(valueOrNotReported(mPreviewRequest.get(CaptureRequest.CONTROL_AE_MODE)))
+                .setRequestedAwbMode(valueOrNotReported(mPreviewRequest.get(CaptureRequest.CONTROL_AWB_MODE)));
+
+        Float focusDistance = mPreviewRequest.get(CaptureRequest.LENS_FOCUS_DISTANCE);
+        if (focusDistance != null) {
+            builder.setRequestedFocusDistanceAvailable(true)
+                    .setRequestedFocusDistanceDiopters(focusDistance);
+        }
+        Range<Integer> fpsRange = mPreviewRequest.get(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE);
+        if (fpsRange != null) {
+            builder.addRequestedFpsRange(fpsRange.getLower());
+            builder.addRequestedFpsRange(fpsRange.getUpper());
+        }
+        if (Build.VERSION.SDK_INT >= 28) {
+            builder.setRequestedOisDataMode(valueOrNotReported(
+                    mPreviewRequest.get(CaptureRequest.STATISTICS_OIS_DATA_MODE)));
+        } else {
+            builder.setRequestedOisDataMode(-1);
+        }
+        mRecordingWriter.queueData(builder.build());
+    }
+
+    private void writeExperimentInfo() {
+        Integer afMode = mPreviewRequest.get(CaptureRequest.CONTROL_AF_MODE);
+        Integer oisMode = mPreviewRequest.get(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE);
+        String oisExperimentMode = oisMode == null ? "NOT_REQUESTED"
+                : oisMode == CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON ? "ON" : "OFF";
+        RecordingProtos.ExperimentInfo info = RecordingProtos.ExperimentInfo.newBuilder()
+                .setAfExperimentMode(RecordingTextFormatter.afModeName(valueOrNotReported(afMode)))
+                .setOisExperimentMode(oisExperimentMode)
+                .build();
+        mRecordingWriter.queueData(info);
+    }
+
     private void writeCaptureData(CaptureResult result, Float focal_length_pix) {
         RecordingProtos.VideoFrameMetaData.Builder frameBuilder = RecordingProtos.VideoFrameMetaData.newBuilder()
                 .setTimeNs(result.get(CaptureResult.SENSOR_TIMESTAMP))
                 .setFrameNumber(result.getFrameNumber())
+                .setCameraFrameNumber(result.getFrameNumber())
+                .setCameraFrameNumberAvailable(true)
                 .setFocalLengthMm(result.get(CaptureResult.LENS_FOCAL_LENGTH))
-                .setEstFocalLengthPix(focal_length_pix);
+                .setEstFocalLengthPix(focal_length_pix)
+                .setAfMode(-1)
+                .setAfState(-1)
+                .setLensState(-1)
+                .setAfSceneChange(-1);
 
         Integer actualOis = result.get(CaptureResult.LENS_OPTICAL_STABILIZATION_MODE);
         Integer actualDvs = result.get(CaptureResult.CONTROL_VIDEO_STABILIZATION_MODE);
@@ -538,9 +659,16 @@ public class Camera2Proxy {
                 .setVideoStabilizationMode(actualDvs == null ? -1 : actualDvs)
                 .setOisDataMode(actualOisData == null ? -1 : actualOisData);
 
-        int focus_state = result.get(CaptureResult.CONTROL_AF_STATE);
-        frameBuilder.setFocusLocked(focus_state != CaptureResult.CONTROL_AF_STATE_ACTIVE_SCAN
-                                 && focus_state != CaptureResult.CONTROL_AF_STATE_PASSIVE_SCAN);
+        Integer afMode = result.get(CaptureResult.CONTROL_AF_MODE);
+        if (afMode != null) frameBuilder.setAfMode(afMode);
+        Integer focusState = result.get(CaptureResult.CONTROL_AF_STATE);
+        if (focusState != null) {
+            frameBuilder.setAfState(focusState);
+            frameBuilder.setFocusLocked(focusState != CaptureResult.CONTROL_AF_STATE_ACTIVE_SCAN
+                    && focusState != CaptureResult.CONTROL_AF_STATE_PASSIVE_SCAN);
+        }
+        Integer lensState = result.get(CaptureResult.LENS_STATE);
+        if (lensState != null) frameBuilder.setLensState(lensState);
 
         // The following values are allowed to be null
         Long sExp = result.get(CaptureResult.SENSOR_EXPOSURE_TIME);
@@ -568,7 +696,38 @@ public class Camera2Proxy {
             frameBuilder.setFocusDistanceDiopters(fDist);
         }
 
+        Pair<Float, Float> focusRange = result.get(CaptureResult.LENS_FOCUS_RANGE);
+        if (focusRange != null) {
+            frameBuilder.addFocusRangeDiopters(focusRange.first);
+            frameBuilder.addFocusRangeDiopters(focusRange.second);
+        }
+
+        Float aperture = result.get(CaptureResult.LENS_APERTURE);
+        if (aperture != null) frameBuilder.setAperture(aperture);
+
+        MeteringRectangle[] afRegions = result.get(CaptureResult.CONTROL_AF_REGIONS);
+        if (afRegions != null) {
+            for (MeteringRectangle region : afRegions) {
+                Rect rect = region.getRect();
+                frameBuilder.addAfRegions(RecordingProtos.VideoFrameMetaData.AFRegion.newBuilder()
+                        .setLeft(rect.left)
+                        .setTop(rect.top)
+                        .setRight(rect.right)
+                        .setBottom(rect.bottom)
+                        .setWeight(region.getMeteringWeight()));
+            }
+        }
+
+        float[] frameIntrinsics = result.get(CaptureResult.LENS_INTRINSIC_CALIBRATION);
+        if (frameIntrinsics != null) {
+            for (float intrinsic : frameIntrinsics) {
+                frameBuilder.addLensIntrinsicCalibration(intrinsic);
+            }
+        }
+
         if (Build.VERSION.SDK_INT >= 28) {
+            Integer afSceneChange = result.get(CaptureResult.CONTROL_AF_SCENE_CHANGE);
+            if (afSceneChange != null) frameBuilder.setAfSceneChange(afSceneChange);
             OisSample[] oisSamples = result.get(CaptureResult.STATISTICS_OIS_SAMPLES);
             if (oisSamples != null) {
                 for (OisSample sample : oisSamples) {
@@ -582,9 +741,29 @@ public class Camera2Proxy {
                 }
             }
         }
+        if (Build.VERSION.SDK_INT >= 35) {
+            addLensIntrinsicsSamples(result, frameBuilder);
+        }
 
         mRecordingWriter.queueData(frameBuilder.build());
 
+    }
+
+    @RequiresApi(35)
+    private static void addLensIntrinsicsSamples(CaptureResult result,
+                                                  RecordingProtos.VideoFrameMetaData.Builder frameBuilder) {
+        LensIntrinsicsSample[] samples = result.get(CaptureResult.STATISTICS_LENS_INTRINSICS_SAMPLES);
+        if (samples == null) return;
+        for (LensIntrinsicsSample sample : samples) {
+            RecordingProtos.VideoFrameMetaData.LensIntrinsicsSample.Builder sampleBuilder =
+                    RecordingProtos.VideoFrameMetaData.LensIntrinsicsSample.newBuilder()
+                            .setTimeNs(sample.getTimestampNanos());
+            float[] intrinsics = sample.getLensIntrinsics();
+            if (intrinsics != null) {
+                for (float intrinsic : intrinsics) sampleBuilder.addIntrinsics(intrinsic);
+            }
+            frameBuilder.addLensIntrinsicsSamples(sampleBuilder);
+        }
     }
 
     private void logAnalyticsConfig() {
