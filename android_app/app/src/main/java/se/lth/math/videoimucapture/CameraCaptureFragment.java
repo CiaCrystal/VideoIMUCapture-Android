@@ -58,6 +58,8 @@ public class CameraCaptureFragment extends Fragment
     private AspectFrameLayout mAspectFrameLayout;
 
     private boolean mRecordingEnabled;      // controls button state
+    private boolean mForegroundStopRequested;
+    private RecordingWriter mForegroundWriter;
     private android.widget.Button mBackgroundButton;
     private boolean mStopRequested;
     private final Handler mBackgroundUi = new Handler(Looper.getMainLooper());
@@ -140,9 +142,9 @@ public class CameraCaptureFragment extends Fragment
 
         // Setup buttons
         mRecordingButton = view.findViewById(R.id.toggleRecording_button);
-        mRecordingButton.setOnClickListener(this::clickToggleRecording);
+        mRecordingButton.setOnClickListener(this::clickToggleForegroundRecording);
         mBackgroundButton = view.findViewById(R.id.backgroundCapture_button);
-        mBackgroundButton.setOnClickListener(this::clickToggleRecording);
+        mBackgroundButton.setOnClickListener(this::clickToggleBackgroundRecording);
 
         mWarningButton = view.findViewById(R.id.OIS_warning_button);
         mWarningButton.setOnClickListener(this::clickWarning);
@@ -193,6 +195,7 @@ public class CameraCaptureFragment extends Fragment
             mBackgroundUi.post(mBackgroundPoll);
             return;
         }
+        mGLView.setVisibility(View.VISIBLE);
         ((CameraCaptureActivity) getActivity()).initializeCamera();
         Log.d(TAG, "Keeping screen on for previewing recording.");
         getActivity().getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -214,6 +217,8 @@ public class CameraCaptureFragment extends Fragment
         mBackgroundUi.removeCallbacks(mBackgroundPoll);
 
         if (mRecordingEnabled) {
+            mRecordingEnabled = false;
+            mForegroundStopRequested = true;
             stopRecording();
         }
 
@@ -240,13 +245,41 @@ public class CameraCaptureFragment extends Fragment
     public void onEncodingFinished() {
         Log.d(TAG, "Got Encoder listener call");
         mRecordingEnabled = false;
-        getActivity().runOnUiThread(() -> updateControls());
+        mForegroundStopRequested = false;
+        RecordingWriter writer = mForegroundWriter;
+        if (writer == null && isAdded()) writer = getsRecordingWriter();
+        if (writer != null && writer.isRecording()) writer.stopRecording();
+        if (isAdded()) requireActivity().runOnUiThread(this::updateControls);
     }
 
     /**
-     * onClick handler for "record" button.
+     * Starts/stops the ordinary foreground recording path. This path keeps the preview Surface
+     * attached and writes video_meta.txt through the Activity-owned RecordingWriter.
      */
-    public void clickToggleRecording(@SuppressWarnings("unused") View unused) {
+    public void clickToggleForegroundRecording(@SuppressWarnings("unused") View unused) {
+        if (mForegroundStopRequested || mStopRequested) return;
+        if (BackgroundCaptureService.isActive()) {
+            Toast.makeText(getContext(), "请先停止后台采集。", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (mRecordingEnabled) {
+            mRecordingEnabled = false;
+            mForegroundStopRequested = true;
+            stopRecording();
+        } else {
+            if (getsRecordingWriter().isRecording()) {
+                Toast.makeText(getContext(), "正在保存上一次采集，请稍候。", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            mGLView.setVisibility(View.VISIBLE);
+            mRecordingEnabled = startRecording();
+        }
+        updateControls();
+    }
+
+    /** Starts/stops the separate background service path, which intentionally owns the camera. */
+    public void clickToggleBackgroundRecording(@SuppressWarnings("unused") View unused) {
         if (mStopRequested) return;
         if (BackgroundCaptureService.isActive()) {
             mStopRequested = true;
@@ -257,7 +290,6 @@ public class CameraCaptureFragment extends Fragment
                 Toast.makeText(getContext(), "Saving recording. Please wait.", Toast.LENGTH_SHORT).show();
                 return;
             }
-            // Both record controls use the service; pausing this Fragment only closes its preview.
             BackgroundCaptureService.startFrom((CameraCaptureActivity) requireActivity());
             if (!BackgroundCaptureService.isActive()) return;
             mGLView.setVisibility(View.INVISIBLE);
@@ -321,40 +353,43 @@ public class CameraCaptureFragment extends Fragment
         }
     }
 
-    private void startRecording() {
+    private boolean startRecording() {
         Camera2Proxy camera2Proxy = getmCamera2Proxy();
+        if (camera2Proxy == null) {
+            Toast.makeText(getContext(), "相机尚未就绪，请稍候再试。", Toast.LENGTH_LONG).show();
+            return false;
+        }
         String outputDir = renewOutputDir();
         String outputFile = outputDir + File.separator + "video_recording.mp4";
         String metaFile = outputDir + File.separator + "video_meta.txt";
         RecordingWriter recordingWriter = getsRecordingWriter();
+        mForegroundWriter = recordingWriter;
         try {
             Context context = requireContext().getApplicationContext();
             recordingWriter.startRecording(metaFile, (path, error) -> {
                 MediaScannerConnection.scanFile(context, new String[]{path}, new String[]{"text/plain"}, null);
                 new Handler(Looper.getMainLooper()).post(() -> {
+                    if (mForegroundWriter == recordingWriter) mForegroundWriter = null;
                     Toast.makeText(context,
                             error == null ? "TXT saved: " + path : "TXT recording failed: " + error.getMessage(),
                             Toast.LENGTH_LONG).show();
                     if (error != null && isAdded() && mRecordingEnabled) {
                         mRecordingEnabled = false;
+                        mForegroundStopRequested = true;
                         stopRecording();
                     }
+                    if (isAdded()) updateControls();
                 });
             });
         } catch (IOException e) {
-            mRecordingEnabled = false;
             Toast.makeText(getContext(), "Could not create TXT: " + e.getMessage(), Toast.LENGTH_LONG).show();
-            return;
+            return false;
         }
 
         mRenderer.resetOutputFiles(outputFile, recordingWriter); // this will not cause sync issues
         getmImuManager().startRecording(recordingWriter);
 
-        if (camera2Proxy != null) {
-            camera2Proxy.startRecordingCaptureResult(recordingWriter);
-        } else {
-            throw new RuntimeException("mCamera2Proxy should not be null upon toggling record button");
-        }
+        camera2Proxy.startRecordingCaptureResult(recordingWriter);
         mGLView.queueEvent(new Runnable() {
             @Override
             public void run() {
@@ -362,6 +397,7 @@ public class CameraCaptureFragment extends Fragment
                 mRenderer.changeRecordingState(true);
             }
         });
+        return true;
     }
 
     private void stopRecording() {
@@ -379,7 +415,6 @@ public class CameraCaptureFragment extends Fragment
                 mRenderer.changeRecordingState(false);
             }
         });
-        getsRecordingWriter().stopRecording();
     }
 
 
@@ -406,22 +441,26 @@ public class CameraCaptureFragment extends Fragment
      * Updates the on-screen controls to reflect the current state of the app.
      */
     public void updateControls() {
-        if (BackgroundCaptureService.isActive() && mCaptureResultText != null) {
+        boolean backgroundActive = BackgroundCaptureService.isActive();
+        boolean foregroundWriterActive = getsRecordingWriter().isRecording();
+        if (backgroundActive && mCaptureResultText != null) {
             mCaptureResultText.setText(mStopRequested ? "正在停止并保存，请稍候…" : BackgroundCaptureService.isReady()
                     ? "后台采集中：视频 + IMU 100 Hz。可按 Home 或锁屏，通知栏可停止保存。"
                     : "正在启动后台采集，请稍候…");
         }
         if (mBackgroundButton != null) {
-            mBackgroundButton.setText(BackgroundCaptureService.isActive()
+            mBackgroundButton.setText(backgroundActive
                     ? R.string.background_capture_stop : R.string.background_capture_start);
-            mBackgroundButton.setEnabled(!mStopRequested && !mRecordingEnabled);
+            mBackgroundButton.setEnabled(!mStopRequested && !mRecordingEnabled
+                    && (!foregroundWriterActive || backgroundActive));
         }
         if (mRecordingButton != null) {
-            int id = (BackgroundCaptureService.isActive() || mRecordingEnabled) ?
+            int id = (mRecordingEnabled || mForegroundStopRequested) ?
                     R.drawable.ic_stop_record : R.drawable.ic_start_record;
             Log.d(TAG, "DRAWING: " + id);
             mRecordingButton.setImageResource(id);
-            mRecordingButton.setEnabled(!mStopRequested);
+            mRecordingButton.setEnabled(!backgroundActive && !mStopRequested
+                    && !mForegroundStopRequested && (!foregroundWriterActive || mRecordingEnabled));
         }
 
         CameraSettingsManager cameraSettingsManager = getmCameraSettingsManager();

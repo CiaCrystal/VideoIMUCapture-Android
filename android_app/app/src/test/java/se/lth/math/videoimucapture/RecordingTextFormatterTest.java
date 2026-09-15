@@ -89,13 +89,16 @@ public class RecordingTextFormatterTest {
 
     @Test public void formatsCaptureExperimentAndTouchCollections() {
         String config = RecordingTextFormatter.captureConfig(CaptureConfig.newBuilder()
-                .setConfigId(0).setRequestedAfMode(3).setRequestedFocusDistanceAvailable(true)
+                .setConfigId(0).setRequestedAfMode(4).setRequestedAfTrigger(0)
+                .setRequestedFocusDistanceAvailable(true)
                 .setRequestedFocusDistanceDiopters(0.5f).setRequestedOpticalStabilizationMode(0)
                 .setRequestedOisDataMode(-1).setRequestedVideoStabilizationMode(0)
                 .setRequestedAeMode(1).setRequestedAwbMode(1).addRequestedFpsRange(30)
                 .addRequestedFpsRange(30).setCaptureTemplate(3).build());
         assertTrue(config.contains("[CAPTURE_CONFIG]\n"));
-        assertTrue(config.contains("requested_af_mode_name=CONTINUOUS_VIDEO\n"));
+        assertTrue(config.contains("requested_af_mode_name=CONTINUOUS_PICTURE\n"));
+        assertTrue(config.contains("requested_af_trigger=0\n"));
+        assertTrue(config.contains("requested_af_trigger_name=IDLE\n"));
         assertTrue(config.contains("requested_fps_range=[30, 30]\n"));
         assertTrue(config.contains("capture_template_name=TEMPLATE_RECORD\n"));
 

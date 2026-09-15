@@ -73,7 +73,8 @@ public class CameraSettingsManager {
                         cameraCharacteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION),
                         CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON,
                         CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
-                        false
+                        false,
+                        true
                 )
         );
 
@@ -202,6 +203,8 @@ abstract class CameraSetting {
 class CameraSettingBoolean extends CameraSetting {
     private int mOnValue, mOffValue;
     private Boolean mDefaultOn, mRequestable;
+    private boolean mForceOff;
+    private boolean mOffAdvertised;
 
     public CameraSettingBoolean(String prefKey,
                                 int[] modes,
@@ -215,13 +218,33 @@ class CameraSettingBoolean extends CameraSetting {
     public CameraSettingBoolean(String prefKey,
                                 int[] modes,
                                 int onValue,
+                                CaptureRequest.Key requestKey,
+                                Boolean defaultOn,
+                                boolean forceOff) {
+        this(prefKey, modes, onValue, 1-onValue, requestKey, defaultOn, forceOff);
+    }
+
+    public CameraSettingBoolean(String prefKey,
+                                int[] modes,
+                                int onValue,
                                 int offValue,
                                 CaptureRequest.Key requestKey,
                                 Boolean defaultOn) {
+        this(prefKey, modes, onValue, offValue, requestKey, defaultOn, false);
+    }
+
+    public CameraSettingBoolean(String prefKey,
+                                int[] modes,
+                                int onValue,
+                                int offValue,
+                                CaptureRequest.Key requestKey,
+                                Boolean defaultOn,
+                                boolean forceOff) {
         mPrefKey = prefKey;
         mRequestKey = requestKey;
         mOnValue = onValue;
         mOffValue = offValue;
+        mForceOff = forceOff;
         boolean forceDefault;
 
         boolean offAvailable = false;
@@ -232,9 +255,18 @@ class CameraSettingBoolean extends CameraSetting {
                 onAvailable |= (m == onValue);
             }
         }
+        mOffAdvertised = offAvailable;
 
         //Figure out valid default value
-        if (offAvailable && onAvailable) {
+        if (mForceOff) {
+            // Some vendor implementations advertise only ON. The experiment requires an
+            // explicit OFF request, so keep the UI and persisted value OFF and send OFF when
+            // the stabilization request key is otherwise exposed.
+            mDefaultOn = false;
+            mConfigurable = false;
+            mRequestable = requestKey != null && (offAvailable || onAvailable);
+            forceDefault = true;
+        } else if (offAvailable && onAvailable) {
             mDefaultOn = defaultOn;
             mConfigurable = true;
             mRequestable = true;
@@ -279,7 +311,11 @@ class CameraSettingBoolean extends CameraSetting {
         super.updatePreference(preference);
         if (mPrefKey.equals("ois") || mPrefKey.equals("ois_data")) {
             String feature = mPrefKey.equals("ois") ? "Optical stabilization" : "OIS sample reporting";
-            preference.setSummary(mConfigurable ? feature + ". Applied when returning to the camera."
+            preference.setSummary(mForceOff
+                    ? !mRequestable ? feature + " is OFF in the app; this camera exposes no Camera2 control."
+                    : mOffAdvertised ? feature + " is forced OFF for capture."
+                    : feature + " is forced OFF by the app although this camera advertises ON only; verify the per-frame actual mode."
+                    : mConfigurable ? feature + ". Applied when returning to the camera."
                     : !mRequestable ? feature + " is not exposed by this camera's Camera2 API."
                     : mDefaultOn ? feature + " is always on; this camera cannot switch it off."
                     : feature + " cannot be enabled through this camera's Camera2 API.");
@@ -461,29 +497,46 @@ class CameraSettingFocusMode extends CameraSetting {
 
     enum FocusMode {CONTINUOUS_AUTO, TOUCH_AUTO, MANUAL}
     private List<FocusMode> mValidModes = new ArrayList<>();
-    private final FocusMode DEFAULT_FOCUS_MODE = FocusMode.TOUCH_AUTO;
+    private final FocusMode DEFAULT_FOCUS_MODE = FocusMode.CONTINUOUS_AUTO;
     private final float DEFAULT_FOCUS_DISTANCE = 0;
     private final float FOCUS_RESOLUTION = 0.1f;
     private Float mMinFocusDistance;
+    private int mContinuousAfMode = CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE;
     private final String mModePrefKey = "focus_mode";
     private final String mDistancePrefKey = "focus_distance";
+    private final String mContinuousPictureMigrationKey = "focus_mode_continuous_picture_migrated";
 
     public CameraSettingFocusMode(CameraCharacteristics cameraCharacteristics) {
         //Check available options
         int[] availableModes = cameraCharacteristics.get(
                 CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES);
-        for (int m : availableModes) {
-            switch (m) {
-                case CameraCharacteristics.CONTROL_AF_MODE_OFF:
-                    mValidModes.add(FocusMode.MANUAL);
-                    break;
-                case CameraCharacteristics.CONTROL_AF_MODE_AUTO:
-                    mValidModes.add(FocusMode.TOUCH_AUTO);
-                    break;
-                case CameraCharacteristics.CONTROL_AF_MODE_CONTINUOUS_VIDEO:
-                    mValidModes.add(FocusMode.CONTINUOUS_AUTO);
-                    break;
+        boolean continuousPictureAvailable = false;
+        boolean continuousVideoAvailable = false;
+        if (availableModes != null) {
+            for (int m : availableModes) {
+                switch (m) {
+                    case CameraCharacteristics.CONTROL_AF_MODE_OFF:
+                        mValidModes.add(FocusMode.MANUAL);
+                        break;
+                    case CameraCharacteristics.CONTROL_AF_MODE_AUTO:
+                        mValidModes.add(FocusMode.TOUCH_AUTO);
+                        break;
+                    case CameraCharacteristics.CONTROL_AF_MODE_CONTINUOUS_PICTURE:
+                        continuousPictureAvailable = true;
+                        break;
+                    case CameraCharacteristics.CONTROL_AF_MODE_CONTINUOUS_VIDEO:
+                        continuousVideoAvailable = true;
+                        break;
+                }
             }
+        }
+        if (continuousPictureAvailable || continuousVideoAvailable) {
+            mValidModes.add(FocusMode.CONTINUOUS_AUTO);
+            // CONTINUOUS_PICTURE is preferred for normal AF collection; VIDEO is a fallback
+            // only for devices that do not expose mode 4.
+            mContinuousAfMode = continuousPictureAvailable
+                    ? CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+                    : CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO;
         }
         Collections.sort(mValidModes);
 
@@ -491,8 +544,17 @@ class CameraSettingFocusMode extends CameraSetting {
         mMinFocusDistance = cameraCharacteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE);
 
         //Set default
-        if (mRestoreDefault || !mSharedPreferences.contains(mModePrefKey)) {
-            mSharedPreferences.edit().putString(mModePrefKey, DEFAULT_FOCUS_MODE.toString()).apply();
+        FocusMode defaultMode = preferredDefaultMode();
+        if ((continuousPictureAvailable || continuousVideoAvailable)
+                && !mSharedPreferences.getBoolean(mContinuousPictureMigrationKey, false)) {
+            // Migrate existing installs that still contain the former TOUCH_AUTO default.
+            mSharedPreferences.edit()
+                    .putString(mModePrefKey, FocusMode.CONTINUOUS_AUTO.toString())
+                    .putBoolean(mContinuousPictureMigrationKey, true)
+                    .apply();
+        } else if (mRestoreDefault || !mSharedPreferences.contains(mModePrefKey)
+                || !mValidModes.contains(readStoredMode(defaultMode))) {
+            mSharedPreferences.edit().putString(mModePrefKey, defaultMode.toString()).apply();
         }
         if (mRestoreDefault || !mSharedPreferences.contains(mDistancePrefKey)) {
             mSharedPreferences.edit().putFloat(mDistancePrefKey, DEFAULT_FOCUS_DISTANCE).apply();
@@ -500,11 +562,28 @@ class CameraSettingFocusMode extends CameraSetting {
     }
 
     public FocusMode getMode() {
-        return FocusMode.valueOf(getModeString());
+        return readStoredMode(preferredDefaultMode());
     }
 
     private String getModeString() {
-        return mSharedPreferences.getString(mModePrefKey, DEFAULT_FOCUS_MODE.toString());
+        return getMode().toString();
+    }
+
+    private FocusMode preferredDefaultMode() {
+        if (mValidModes.contains(DEFAULT_FOCUS_MODE)) return DEFAULT_FOCUS_MODE;
+        if (mValidModes.contains(FocusMode.TOUCH_AUTO)) return FocusMode.TOUCH_AUTO;
+        if (mValidModes.contains(FocusMode.MANUAL)) return FocusMode.MANUAL;
+        return DEFAULT_FOCUS_MODE;
+    }
+
+    private FocusMode readStoredMode(FocusMode fallback) {
+        try {
+            FocusMode mode = FocusMode.valueOf(
+                    mSharedPreferences.getString(mModePrefKey, fallback.toString()));
+            return mValidModes.isEmpty() || mValidModes.contains(mode) ? mode : fallback;
+        } catch (IllegalArgumentException | NullPointerException ignored) {
+            return fallback;
+        }
     }
 
     private float getFocusDistance() {
@@ -560,10 +639,10 @@ class CameraSettingFocusMode extends CameraSetting {
             case TOUCH_AUTO:
                 builder.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_AUTO);
                 builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_IDLE);
-                builder.set(CaptureRequest.LENS_FOCUS_DISTANCE, getFocusDistance());
                 break;
             case CONTINUOUS_AUTO:
-                builder.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO);
+                builder.set(CaptureRequest.CONTROL_AF_MODE, mContinuousAfMode);
+                builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_IDLE);
                 builder.set(CaptureRequest.CONTROL_AF_REGIONS, null);
                 break;
         }

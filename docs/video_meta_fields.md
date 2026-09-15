@@ -157,7 +157,7 @@
 | `distortion_correction` | `distortion_correction` | bool | 应用配置的畸变校正开关状态；没有对应的逐帧实际校正模式字段 |
 | `sensor_orientation_degrees` | `sensor_orientation` | int / 度 | `SENSOR_ORIENTATION`，相机传感器方向，通常 0、90、180、270 |
 
-OIS 能力数组中 `0=OFF`、`1=ON`：`[0, 1]` 可切换，`[1]` 仅暴露开启模式，`[0]` 仅暴露关闭模式，`[]` 表示没有导出能力值。能力数组不能代替 CaptureResult 的实际状态。接口定义见 [CameraCharacteristics](https://developer.android.com/reference/android/hardware/camera2/CameraCharacteristics)。
+OIS 能力数组中 `0=OFF`、`1=ON`：`[0, 1]` 表示同时声明两种模式，`[1]` 表示厂商只声明 ON，`[0]` 表示只声明 OFF，`[]` 表示没有导出能力值。当前 App 始终把开关和持久化值设为 OFF；即使遇到 `[1]` 也会尝试发送 OFF 请求，但驱动是否接受必须以逐帧 `actual_optical_stabilization_mode` 为准。能力数组不能代替 CaptureResult 的实际状态。
 
 ### 5.2 内参与畸变
 
@@ -211,7 +211,7 @@ OIS 能力数组中 `0=OFF`、`1=ON`：`[0, 1]` 可切换，`[1]` 仅暴露开�
 
 `EXPERIMENT_INFO` 每次录制一条。当前 App 自动填写 `af_experiment_mode` 和 `ois_experiment_mode`；`experiment_id`、`trial_group`、`device_pose`、`support_condition`、`camera_covered`、`scene_type`、`target_type`、`notes` 尚无设置界面，因此保持为空，不会伪造实验标签。
 
-`CAPTURE_CONFIG` 每次录制一条，记录 `config_id`、`requested_af_mode`/`_name`、`requested_focus_distance_diopters`、请求的 OIS/OIS data/DVS/AE/AWB 模式、`requested_fps_range` 和 `capture_template`/`_name`。整型请求值为 `-1` 时表示该键未被请求或不可用；这组字段表示 App 请求，不能替代逐帧 CaptureResult 的实际状态。
+`CAPTURE_CONFIG` 每次录制一条，记录 `config_id`、`requested_af_mode`/`_name`、`requested_af_trigger`/`_name`、`requested_focus_distance_diopters`、请求的 OIS/OIS data/DVS/AE/AWB 模式、`requested_fps_range` 和 `capture_template`/`_name`。正常 AF 采集应为 `requested_af_mode=4`（`CONTINUOUS_PICTURE`）和 `requested_af_trigger=0`（`IDLE`）；只有手动对焦模式才把 `requested_focus_distance_diopters` 视为 App 明确设置的请求。整型请求值为 `-1` 时表示该键未被请求或不可用；这组字段表示 App 请求，不能替代逐帧 CaptureResult 的实际状态。
 
 ## 6. FRAME_METADATA：逐帧元数据
 
@@ -327,9 +327,9 @@ Android API 35+ 且相机提供 `STATISTICS_LENS_INTRINSICS_SAMPLES` 时，每�
 | 磁力计 `minDelay` | 10000 μs | 驱动报告能力对应约 100 Hz |
 | `estimated_accelerometer_frequency_hz` | 201.25284 | 录制开始时加速度计频率估计 |
 | `camera_id` | `0` | 当前打开的相机 ID |
-| `available_ois_modes` | `[1]` | 仅暴露 OIS 开启模式，所以开关开启但不可切换 |
-| `optical_image_stabilization` | `true` | 应用配置为开启 |
-| `actual_optical_stabilization_mode` | 302 条帧记录均为 1 | 驱动逐帧报告 OIS 开启 |
+| `available_ois_modes` | `[1]` | 厂商只声明 OIS ON；新版 App 仍显示并请求 OFF |
+| `optical_image_stabilization` | `true` | 这是修改前录制文件中的旧值；新版应输出 `false` |
+| `actual_optical_stabilization_mode` | 302 条帧记录均为 1 | 旧文件中驱动逐帧报告 OIS 开启；新版仍须用该字段验证 OFF 请求是否生效 |
 | `available_ois_data_modes` | `[]` | 未导出 OIS sample reporting 能力 |
 | `actual_ois_data_mode` | 302 条均为 -1 | 未报告 OIS 数据模式 |
 | `ois_sample_count` | 302 条均为 0 | 本次没有 OIS 位移样本，不是位移恒为零 |
@@ -340,13 +340,13 @@ Android API 35+ 且相机提供 `STATISTICS_LENS_INTRINSICS_SAMPLES` 时，每�
 
 ## 11. 下游解析与使用注意事项
 
-1. 先按 section 分流，再读取该 section 的 key。OIS 索引是帧内索引，不能跨帧拼成同名字段字典。
+1. 先按 section 分流，再读取该 section 的 key。`OIS_SAMPLE` 和 `LENS_INTRINSICS_SAMPLE` 用 `parent_camera_frame_number` 关联父帧，`sample_index` 仅在父帧内编号。
 2. `time_ns` 与 `time_us` 换算后才能比较；Unix 起始时间不能直接与它们相减。估算输出 IMU 平均频率可用 `(N-1)*1e9/(t_last-t_first)`，同时检查相邻间隔、重复时间和长间隙。
 3. `gyroscope_drift_rad_s` 是驱动的偏置估计，不是项目自行完成的 IMU 标定。该文件不包含噪声密度、随机游走或协方差矩阵。
 4. 相机静态内参、设备位姿参考和逐帧像素焦距估计不能自动替代相机—IMU 联合标定。
 5. 当前没有导出独立的原始加速度/磁力计事件时间戳、欧拉角、融合姿态、轨迹、GPS、温度或图像像素；图像在独立 MP4 文件中。
 6. TXT 测量字段使用稳定十进制格式，但 `*_info` 是 Android 的原始描述字符串，其内部格式由系统决定。
-7. 文件头仍叫 v1，后续代码可能增加字段。解析器应容忍未知字段，对旧文件中缺失的新字段标记为未知，而不是默认解释为关闭或 0。
+7. 当前文件头为 v2；解析器应容忍未知字段，对旧文件中缺失的新字段标记为未知，而不是默认解释为关闭或 0。
 8. 后台录制使用相机直接连接编码器，MP4 通过旋转元数据指定显示方向；提取图像时应应用该旋转，才能与 TXT 中按方向处理的尺寸和内参对应。后台模式仍输出相同字段，目录后缀为 `_background`。
 
 ## 12. 源码定位

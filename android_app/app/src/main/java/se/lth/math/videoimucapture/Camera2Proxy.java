@@ -280,6 +280,20 @@ public class Camera2Proxy {
             return;
         }
         try {
+            Integer afMode = mPreviewRequest.get(CaptureRequest.CONTROL_AF_MODE);
+            if (afMode != null && (afMode == CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+                    || afMode == CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)) {
+                // Clear any AF lock left by a previous AUTO/trigger sequence before starting
+                // the continuous repeating request.
+                mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER,
+                        CaptureRequest.CONTROL_AF_TRIGGER_CANCEL);
+                mCaptureSession.capture(
+                        mPreviewRequestBuilder.build(), mSessionCaptureCallback, mBackgroundHandler);
+                mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, afMode);
+                mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER,
+                        CaptureRequest.CONTROL_AF_TRIGGER_IDLE);
+                mPreviewRequest = mPreviewRequestBuilder.build();
+            }
             mCaptureSession.setRepeatingRequest(
                     mPreviewRequest, mSessionCaptureCallback, mBackgroundHandler);
         } catch (CameraAccessException | IllegalStateException e) {
@@ -597,10 +611,13 @@ public class Camera2Proxy {
     }
 
     private void writeCaptureConfig() {
+        Integer requestedAfMode = mPreviewRequest.get(CaptureRequest.CONTROL_AF_MODE);
         RecordingProtos.CaptureConfig.Builder builder = RecordingProtos.CaptureConfig.newBuilder()
                 .setConfigId(0)
                 .setCaptureTemplate(CameraDevice.TEMPLATE_RECORD)
-                .setRequestedAfMode(valueOrNotReported(mPreviewRequest.get(CaptureRequest.CONTROL_AF_MODE)))
+                .setRequestedAfMode(valueOrNotReported(requestedAfMode))
+                .setRequestedAfTrigger(valueOrNotReported(
+                        mPreviewRequest.get(CaptureRequest.CONTROL_AF_TRIGGER)))
                 .setRequestedOpticalStabilizationMode(valueOrNotReported(
                         mPreviewRequest.get(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE)))
                 .setRequestedVideoStabilizationMode(valueOrNotReported(
@@ -609,7 +626,8 @@ public class Camera2Proxy {
                 .setRequestedAwbMode(valueOrNotReported(mPreviewRequest.get(CaptureRequest.CONTROL_AWB_MODE)));
 
         Float focusDistance = mPreviewRequest.get(CaptureRequest.LENS_FOCUS_DISTANCE);
-        if (focusDistance != null) {
+        if (requestedAfMode != null && requestedAfMode == CaptureRequest.CONTROL_AF_MODE_OFF
+                && focusDistance != null) {
             builder.setRequestedFocusDistanceAvailable(true)
                     .setRequestedFocusDistanceDiopters(focusDistance);
         }

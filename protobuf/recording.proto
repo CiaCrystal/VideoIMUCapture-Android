@@ -87,6 +87,7 @@ message CaptureConfig {
   int32 requested_awb_mode = 9;
   repeated int32 requested_fps_range = 10; // [min, max]
   int32 capture_template = 11;
+  int32 requested_af_trigger = 12;
 }
 
 message ExperimentInfo {

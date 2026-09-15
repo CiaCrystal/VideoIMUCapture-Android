@@ -154,6 +154,8 @@ final class RecordingTextFormatter {
         field(out, "config_id", data.getConfigId());
         field(out, "requested_af_mode", data.getRequestedAfMode());
         field(out, "requested_af_mode_name", afModeName(data.getRequestedAfMode()));
+        field(out, "requested_af_trigger", data.getRequestedAfTrigger());
+        field(out, "requested_af_trigger_name", afTriggerName(data.getRequestedAfTrigger()));
         optionalFloat(out, "requested_focus_distance_diopters",
                 data.getRequestedFocusDistanceDiopters(), data.getRequestedFocusDistanceAvailable());
         field(out, "requested_optical_stabilization_mode", data.getRequestedOpticalStabilizationMode());
@@ -280,6 +282,16 @@ final class RecordingTextFormatter {
             case 3: return "CONTINUOUS_VIDEO";
             case 4: return "CONTINUOUS_PICTURE";
             case 5: return "EDOF";
+            case -1: return "NOT_REPORTED";
+            default: return "UNKNOWN";
+        }
+    }
+
+    private static String afTriggerName(int value) {
+        switch (value) {
+            case 0: return "IDLE";
+            case 1: return "START";
+            case 2: return "CANCEL";
             case -1: return "NOT_REPORTED";
             default: return "UNKNOWN";
         }
