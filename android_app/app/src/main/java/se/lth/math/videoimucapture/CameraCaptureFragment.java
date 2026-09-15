@@ -30,6 +30,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.fragment.app.Fragment;
+import androidx.preference.PreferenceManager;
 
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
@@ -53,6 +54,7 @@ public class CameraCaptureFragment extends Fragment
         implements SurfaceTexture.OnFrameAvailableListener, TextureMovieEncoder.EncoderListener {
 
     public static final String TAG = "VIMUC-CaptureFragment";
+    private static final String GRID_EXPERIMENT_PREF_KEY = "enable_grid_experiment";
     private static final boolean VERBOSE = false;
     private SampleGLView mGLView;
     private CameraSurfaceRenderer mRenderer;
@@ -62,6 +64,7 @@ public class CameraCaptureFragment extends Fragment
     private TextView mGridExperimentPrompt;
     private TextView[] mGridCells;
     private final GridTrialSequence mGridTrialSequence = new GridTrialSequence();
+    private boolean mGridExperimentEnabled;
 
     private boolean mRecordingEnabled;      // controls button state
     private boolean mForegroundStopRequested;
@@ -185,6 +188,7 @@ public class CameraCaptureFragment extends Fragment
             mGridCells[i].setOnClickListener(unused -> onGridCellClicked(cellIndex));
         }
         renderGridExperiment();
+        refreshGridExperimentPreference();
 
     }
 
@@ -209,6 +213,7 @@ public class CameraCaptureFragment extends Fragment
     public void onResume() {
         Log.d(TAG, "onResume");
         super.onResume();
+        refreshGridExperimentPreference();
         if (BackgroundCaptureService.isActive()) {
             mGLView.setVisibility(View.INVISIBLE);
             setGridExperimentVisible(false);
@@ -296,7 +301,7 @@ public class CameraCaptureFragment extends Fragment
             }
             mGLView.setVisibility(View.VISIBLE);
             mRecordingEnabled = startRecording();
-            if (mRecordingEnabled) startGridExperiment();
+            if (mRecordingEnabled && mGridExperimentEnabled) startGridExperiment();
         }
         updateControls();
     }
@@ -468,7 +473,7 @@ public class CameraCaptureFragment extends Fragment
     public void updateControls() {
         boolean backgroundActive = BackgroundCaptureService.isActive();
         boolean foregroundWriterActive = getsRecordingWriter().isRecording();
-        setGridExperimentVisible(!backgroundActive);
+        setGridExperimentVisible(mGridExperimentEnabled && !backgroundActive);
         if (backgroundActive && mCaptureResultText != null) {
             mCaptureResultText.setText(mStopRequested ? "正在停止并保存，请稍候…" : BackgroundCaptureService.isReady()
                     ? "后台采集中：视频 + IMU 100 Hz。可按 Home 或锁屏，通知栏可停止保存。"
@@ -507,6 +512,7 @@ public class CameraCaptureFragment extends Fragment
     }
 
     private void startGridExperiment() {
+        if (!mGridExperimentEnabled) return;
         mGridTrialSequence.start();
         renderGridExperiment();
     }
@@ -530,6 +536,14 @@ public class CameraCaptureFragment extends Fragment
         int visibility = visible ? View.VISIBLE : View.GONE;
         if (mGridExperimentGrid != null) mGridExperimentGrid.setVisibility(visibility);
         if (mGridExperimentPrompt != null) mGridExperimentPrompt.setVisibility(visibility);
+    }
+
+    private void refreshGridExperimentPreference() {
+        mGridExperimentEnabled = PreferenceManager.getDefaultSharedPreferences(requireContext())
+                .getBoolean(GRID_EXPERIMENT_PREF_KEY, false);
+        if (!mGridExperimentEnabled) mGridTrialSequence.stop();
+        setGridExperimentVisible(mGridExperimentEnabled && !BackgroundCaptureService.isActive());
+        renderGridExperiment();
     }
 
     private void renderGridExperiment() {

@@ -39,6 +39,18 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        app:key="experiment_category"
+        app:title="Experiment">
+
+        <SwitchPreferenceCompat
+            app:key="enable_grid_experiment"
+            app:title="Enable 3×3 Target Grid"
+            app:summary="Show random highlighted targets and fill target_label/trial_id during foreground recording."
+            app:defaultValue="false"
+            app:persistent="true" />
+    </PreferenceCategory>
+
+    <PreferenceCategory
         app:key="stabilization_category"
         app:title="Stabilization">
 

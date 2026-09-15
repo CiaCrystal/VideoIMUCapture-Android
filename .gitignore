@@ -3,6 +3,7 @@
 *.aar
 *.ap_
 *.aab
+*.history
 
 # Files for the ART/Dalvik VM
 *.dex
