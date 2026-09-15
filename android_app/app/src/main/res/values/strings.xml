@@ -1,6 +1,9 @@
 <resources>
     <string name="background_capture_start">后台采集（视频 + IMU）</string>
     <string name="background_capture_stop">停止后台采集并保存</string>
+    <string name="grid_experiment_idle">点击中央录制按钮后开始 3×3 区域实验</string>
+    <string name="grid_experiment_trial">第 %1$d 轮：点击高亮的 %2$d 号区域</string>
+    <string name="grid_experiment_wrong_target">请点击当前高亮区域</string>
     <string name="app_name">VideoIMUCapture</string>
     <string name="toggleRecordingOn">Record</string>
     <string name="toggleRecordingOff">Stop</string>

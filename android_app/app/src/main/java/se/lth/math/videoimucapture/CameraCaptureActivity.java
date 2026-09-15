@@ -176,7 +176,11 @@ public class CameraCaptureActivity extends AppCompatActivity {
                 ? event.getEventTimeNanos() : event.getEventTime() * 1_000_000L;
         long elapsedRealtimeOffsetNs = SystemClock.elapsedRealtimeNanos()
                 - SystemClock.uptimeMillis() * 1_000_000L;
-        RecordingProtos.TouchEvent touch = RecordingProtos.TouchEvent.newBuilder()
+        float rawX = event.getRawX() + event.getX(pointerIndex) - event.getX();
+        float rawY = event.getRawY() + event.getY(pointerIndex) - event.getY();
+        CameraCaptureFragment.TouchAnnotation annotation = mCameraCaptureFragment == null
+                ? null : mCameraCaptureFragment.getGridTouchAnnotation(rawX, rawY);
+        RecordingProtos.TouchEvent.Builder touchBuilder = RecordingProtos.TouchEvent.newBuilder()
                 .setTimeNs(eventUptimeNs + elapsedRealtimeOffsetNs)
                 .setAction(action)
                 .setXPx(event.getX(pointerIndex))
@@ -184,8 +188,11 @@ public class CameraCaptureActivity extends AppCompatActivity {
                 .setPressure(event.getPressure(pointerIndex))
                 .setSize(event.getSize(pointerIndex))
                 .setPointerId(event.getPointerId(pointerIndex))
-                .setTrialId(-1)
-                .build();
+                .setTrialId(-1);
+        if (annotation != null) {
+            touchBuilder.setTargetLabel(annotation.targetLabel).setTrialId(annotation.trialId);
+        }
+        RecordingProtos.TouchEvent touch = touchBuilder.build();
         if (!BackgroundCaptureService.queueTouchEvent(touch)) sRecordingWriter.queueData(touch);
     }
 

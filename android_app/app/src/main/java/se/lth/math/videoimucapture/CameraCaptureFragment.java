@@ -1,6 +1,8 @@
 package se.lth.math.videoimucapture;
 
 import android.graphics.SurfaceTexture;
+import android.graphics.Color;
+import android.graphics.Rect;
 import android.media.MediaScannerConnection;
 import android.content.Context;
 import android.os.Handler;
@@ -56,6 +58,10 @@ public class CameraCaptureFragment extends Fragment
     private CameraSurfaceRenderer mRenderer;
     private TextView mCaptureResultText;
     private AspectFrameLayout mAspectFrameLayout;
+    private View mGridExperimentGrid;
+    private TextView mGridExperimentPrompt;
+    private TextView[] mGridCells;
+    private final GridTrialSequence mGridTrialSequence = new GridTrialSequence();
 
     private boolean mRecordingEnabled;      // controls button state
     private boolean mForegroundStopRequested;
@@ -166,6 +172,20 @@ public class CameraCaptureFragment extends Fragment
 
         mCaptureResultText = view.findViewById(R.id.captureResult_text);
 
+        mGridExperimentGrid = view.findViewById(R.id.gridExperiment_grid);
+        mGridExperimentPrompt = view.findViewById(R.id.gridExperimentPrompt_text);
+        int[] gridCellIds = {R.id.gridCell1, R.id.gridCell2, R.id.gridCell3,
+                R.id.gridCell4, R.id.gridCell5, R.id.gridCell6,
+                R.id.gridCell7, R.id.gridCell8, R.id.gridCell9};
+        mGridCells = new TextView[gridCellIds.length];
+        for (int i = 0; i < gridCellIds.length; i++) {
+            final int cellIndex = i;
+            mGridCells[i] = view.findViewById(gridCellIds[i]);
+            mGridCells[i].setContentDescription("KEY_" + (i + 1));
+            mGridCells[i].setOnClickListener(unused -> onGridCellClicked(cellIndex));
+        }
+        renderGridExperiment();
+
     }
 
     // updates mCameraPreviewWidth/Height
@@ -191,11 +211,13 @@ public class CameraCaptureFragment extends Fragment
         super.onResume();
         if (BackgroundCaptureService.isActive()) {
             mGLView.setVisibility(View.INVISIBLE);
+            setGridExperimentVisible(false);
             updateControls();
             mBackgroundUi.post(mBackgroundPoll);
             return;
         }
         mGLView.setVisibility(View.VISIBLE);
+        setGridExperimentVisible(true);
         ((CameraCaptureActivity) getActivity()).initializeCamera();
         Log.d(TAG, "Keeping screen on for previewing recording.");
         getActivity().getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -274,6 +296,7 @@ public class CameraCaptureFragment extends Fragment
             }
             mGLView.setVisibility(View.VISIBLE);
             mRecordingEnabled = startRecording();
+            if (mRecordingEnabled) startGridExperiment();
         }
         updateControls();
     }
@@ -293,6 +316,7 @@ public class CameraCaptureFragment extends Fragment
             BackgroundCaptureService.startFrom((CameraCaptureActivity) requireActivity());
             if (!BackgroundCaptureService.isActive()) return;
             mGLView.setVisibility(View.INVISIBLE);
+            setGridExperimentVisible(false);
         }
         updateControls();
         mBackgroundUi.removeCallbacks(mBackgroundPoll);
@@ -402,6 +426,7 @@ public class CameraCaptureFragment extends Fragment
 
     private void stopRecording() {
         Log.d(TAG, "Stop recording");
+        stopGridExperiment();
         Camera2Proxy camera2Proxy = getmCamera2Proxy();
         if (camera2Proxy != null) {
             camera2Proxy.stopRecordingCaptureResult();
@@ -443,6 +468,7 @@ public class CameraCaptureFragment extends Fragment
     public void updateControls() {
         boolean backgroundActive = BackgroundCaptureService.isActive();
         boolean foregroundWriterActive = getsRecordingWriter().isRecording();
+        setGridExperimentVisible(!backgroundActive);
         if (backgroundActive && mCaptureResultText != null) {
             mCaptureResultText.setText(mStopRequested ? "正在停止并保存，请稍候…" : BackgroundCaptureService.isReady()
                     ? "后台采集中：视频 + IMU 100 Hz。可按 Home 或锁屏，通知栏可停止保存。"
@@ -477,6 +503,74 @@ public class CameraCaptureFragment extends Fragment
                     || cameraSettingsManager.DVSEnabled()
                     || cameraSettingsManager.DistortionCorrectionEnabled()
                     || !getmImuManager().sensorsExist());
+        }
+    }
+
+    private void startGridExperiment() {
+        mGridTrialSequence.start();
+        renderGridExperiment();
+    }
+
+    private void stopGridExperiment() {
+        mGridTrialSequence.stop();
+        renderGridExperiment();
+    }
+
+    private void onGridCellClicked(int cellIndex) {
+        if (!mRecordingEnabled || !mGridTrialSequence.isActive()) return;
+        if (cellIndex != mGridTrialSequence.getTargetIndex()) {
+            Toast.makeText(getContext(), R.string.grid_experiment_wrong_target, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        mGridTrialSequence.advance();
+        renderGridExperiment();
+    }
+
+    private void setGridExperimentVisible(boolean visible) {
+        int visibility = visible ? View.VISIBLE : View.GONE;
+        if (mGridExperimentGrid != null) mGridExperimentGrid.setVisibility(visibility);
+        if (mGridExperimentPrompt != null) mGridExperimentPrompt.setVisibility(visibility);
+    }
+
+    private void renderGridExperiment() {
+        if (mGridCells == null || mGridExperimentPrompt == null) return;
+        boolean active = mGridTrialSequence.isActive();
+        int target = mGridTrialSequence.getTargetIndex();
+        for (int i = 0; i < mGridCells.length; i++) {
+            boolean highlighted = active && i == target;
+            mGridCells[i].setEnabled(active);
+            mGridCells[i].setBackgroundResource(highlighted
+                    ? R.drawable.grid_cell_highlight : R.drawable.grid_cell_normal);
+            mGridCells[i].setTextColor(highlighted ? Color.BLACK : Color.WHITE);
+        }
+        if (active) {
+            mGridExperimentPrompt.setText(getString(R.string.grid_experiment_trial,
+                    mGridTrialSequence.getTrialId(), target + 1));
+        } else {
+            mGridExperimentPrompt.setText(R.string.grid_experiment_idle);
+        }
+    }
+
+    /** Returns the active trial only when the pointer is inside the highlighted target cell. */
+    @Nullable
+    TouchAnnotation getGridTouchAnnotation(float rawX, float rawY) {
+        if (!mGridTrialSequence.isActive() || mGridCells == null) return null;
+        int target = mGridTrialSequence.getTargetIndex();
+        TextView targetView = mGridCells[target];
+        Rect bounds = new Rect();
+        if (!targetView.isShown() || !targetView.getGlobalVisibleRect(bounds)
+                || !bounds.contains((int) rawX, (int) rawY)) return null;
+        return new TouchAnnotation(mGridTrialSequence.getTargetLabel(),
+                mGridTrialSequence.getTrialId());
+    }
+
+    static final class TouchAnnotation {
+        final String targetLabel;
+        final long trialId;
+
+        TouchAnnotation(String targetLabel, long trialId) {
+            this.targetLabel = targetLabel;
+            this.trialId = trialId;
         }
     }
 

@@ -293,7 +293,9 @@ Android API 35+ 且相机提供 `STATISTICS_LENS_INTRINSICS_SAMPLES` 时，每�
 
 ### 7.4 TOUCH_EVENT
 
-录制期间 App 窗口内的 DOWN、UP、POINTER_DOWN、POINTER_UP 和 CANCEL 事件分别输出一条，字段包括 `time_ns`、`action`/`action_name`、`x_px`、`y_px`、`pressure`、`size`、`pointer_id`、`target_label` 和 `trial_id`。时间从输入事件的 uptime 时钟换算到 elapsed realtime，以便与 `REALTIME` Camera 时间和 SensorEvent 时间对齐。当前没有 target/trial 标注界面，因此 `target_label` 为空、`trial_id=-1`。
+录制期间 App 窗口内的 DOWN、UP、POINTER_DOWN、POINTER_UP 和 CANCEL 事件分别输出一条，字段包括 `time_ns`、`action`/`action_name`、`x_px`、`y_px`、`pressure`、`size`、`pointer_id`、`target_label` 和 `trial_id`。时间从输入事件的 uptime 时钟换算到 elapsed realtime，以便与 `REALTIME` Camera 时间和 SensorEvent 时间对齐。
+
+前台录制开始时，3×3 点击界面从左上到右下对应 `KEY_1`～`KEY_9`，每个 TXT 的 `trial_id` 从 1 开始。随机高亮的格子是本轮目标；点中该格后 `trial_id` 加 1，并随机高亮另一个格子（不会与上一轮相同）。落在当前高亮格内的触摸事件自动填写本轮 `target_label` 和 `trial_id`；点错或点击界面外仍保留触摸数据，但写为 `target_label=`、`trial_id=-1`，且不推进轮次。后台采集不显示或启用该交互实验。
 
 ## 8. FRAME_TIMESTAMP：未匹配的编码帧
 
