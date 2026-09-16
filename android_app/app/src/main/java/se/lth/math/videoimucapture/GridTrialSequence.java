@@ -11,6 +11,7 @@ final class GridTrialSequence {
     };
 
     private final Random random;
+    private int[] allowedTargetIndices = {0, 1, 2, 3, 4, 5, 6, 7, 8};
     private long trialId = -1;
     private int targetIndex = -1;
 
@@ -24,14 +25,45 @@ final class GridTrialSequence {
 
     void start() {
         trialId = 1;
-        targetIndex = random.nextInt(LABELS.length);
+        targetIndex = allowedTargetIndices[random.nextInt(allowedTargetIndices.length)];
     }
 
     void advance() {
         if (!isActive()) return;
-        // Select one of the other eight cells so two adjacent trials never look unchanged.
-        targetIndex = (targetIndex + 1 + random.nextInt(LABELS.length - 1)) % LABELS.length;
+        if (allowedTargetIndices.length == 1) {
+            targetIndex = allowedTargetIndices[0];
+        } else {
+            int currentPosition = indexOfAllowedTarget(targetIndex);
+            targetIndex = allowedTargetIndices[(currentPosition + 1
+                    + random.nextInt(allowedTargetIndices.length - 1))
+                    % allowedTargetIndices.length];
+        }
         trialId++;
+    }
+
+    void setAllowedTargetIndices(int[] targetIndices) {
+        if (targetIndices == null || targetIndices.length == 0) {
+            throw new IllegalArgumentException("At least one grid target is required");
+        }
+        boolean[] seen = new boolean[LABELS.length];
+        int[] copy = targetIndices.clone();
+        for (int target : copy) {
+            if (target < 0 || target >= LABELS.length || seen[target]) {
+                throw new IllegalArgumentException("Invalid or duplicate grid target: " + target);
+            }
+            seen[target] = true;
+        }
+        allowedTargetIndices = copy;
+        if (isActive() && indexOfAllowedTarget(targetIndex) < 0) {
+            targetIndex = allowedTargetIndices[random.nextInt(allowedTargetIndices.length)];
+        }
+    }
+
+    private int indexOfAllowedTarget(int target) {
+        for (int i = 0; i < allowedTargetIndices.length; i++) {
+            if (allowedTargetIndices[i] == target) return i;
+        }
+        return -1;
     }
 
     void stop() {

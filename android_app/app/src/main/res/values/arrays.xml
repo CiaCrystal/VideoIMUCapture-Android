@@ -10,4 +10,35 @@
         <item>Manual</item>
     </string-array>
 
+    <string-array name="grid_experiment_mode_entries">
+        <item>Random</item>
+        <item>Custom</item>
+    </string-array>
+    <string-array name="grid_experiment_mode_values">
+        <item>random</item>
+        <item>custom</item>
+    </string-array>
+    <string-array name="grid_target_entries">
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+        <item>5</item>
+        <item>6</item>
+        <item>7</item>
+        <item>8</item>
+        <item>9</item>
+    </string-array>
+    <string-array name="grid_target_values">
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+        <item>5</item>
+        <item>6</item>
+        <item>7</item>
+        <item>8</item>
+        <item>9</item>
+    </string-array>
+
 </resources>

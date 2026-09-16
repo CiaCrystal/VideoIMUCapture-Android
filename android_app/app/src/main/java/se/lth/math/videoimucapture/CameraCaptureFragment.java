@@ -5,6 +5,7 @@ import android.graphics.Color;
 import android.graphics.Rect;
 import android.media.MediaScannerConnection;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 import android.widget.Toast;
@@ -41,6 +42,7 @@ import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Locale;
+import java.util.Set;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
@@ -55,6 +57,9 @@ public class CameraCaptureFragment extends Fragment
 
     public static final String TAG = "VIMUC-CaptureFragment";
     private static final String GRID_EXPERIMENT_PREF_KEY = "enable_grid_experiment";
+    private static final String GRID_EXPERIMENT_MODE_PREF_KEY = "grid_experiment_mode";
+    private static final String GRID_CUSTOM_TARGETS_PREF_KEY = "grid_experiment_custom_targets";
+    private static final String GRID_MODE_CUSTOM = "custom";
     private static final boolean VERBOSE = false;
     private SampleGLView mGLView;
     private CameraSurfaceRenderer mRenderer;
@@ -539,11 +544,30 @@ public class CameraCaptureFragment extends Fragment
     }
 
     private void refreshGridExperimentPreference() {
-        mGridExperimentEnabled = PreferenceManager.getDefaultSharedPreferences(requireContext())
-                .getBoolean(GRID_EXPERIMENT_PREF_KEY, false);
+        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(requireContext());
+        mGridExperimentEnabled = preferences.getBoolean(GRID_EXPERIMENT_PREF_KEY, false);
+        mGridTrialSequence.setAllowedTargetIndices(resolveAllowedGridTargets(preferences));
         if (!mGridExperimentEnabled) mGridTrialSequence.stop();
         setGridExperimentVisible(mGridExperimentEnabled && !BackgroundCaptureService.isActive());
         renderGridExperiment();
+    }
+
+    private int[] resolveAllowedGridTargets(SharedPreferences preferences) {
+        if (!GRID_MODE_CUSTOM.equals(preferences.getString(GRID_EXPERIMENT_MODE_PREF_KEY, "random"))) {
+            return new int[]{0, 1, 2, 3, 4, 5, 6, 7, 8};
+        }
+        Set<String> selected = preferences.getStringSet(GRID_CUSTOM_TARGETS_PREF_KEY, null);
+        if (selected == null || selected.isEmpty()) {
+            return new int[]{0, 1, 2, 3, 4, 5, 6, 7, 8};
+        }
+        int[] targets = new int[9];
+        int count = 0;
+        for (int number = 1; number <= 9; number++) {
+            if (selected.contains(Integer.toString(number))) targets[count++] = number - 1;
+        }
+        return count == 0
+                ? new int[]{0, 1, 2, 3, 4, 5, 6, 7, 8}
+                : Arrays.copyOf(targets, count);
     }
 
     private void renderGridExperiment() {

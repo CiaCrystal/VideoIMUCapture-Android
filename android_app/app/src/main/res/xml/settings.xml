@@ -45,8 +45,25 @@
         <SwitchPreferenceCompat
             app:key="enable_grid_experiment"
             app:title="Enable 3×3 Target Grid"
-            app:summary="Show random highlighted targets and fill target_label/trial_id during foreground recording."
+            app:summary="Show highlighted targets and fill target_label/trial_id during foreground recording."
             app:defaultValue="false"
+            app:persistent="true" />
+
+        <ListPreference
+            app:key="grid_experiment_mode"
+            app:title="Target Selection Mode"
+            app:entries="@array/grid_experiment_mode_entries"
+            app:entryValues="@array/grid_experiment_mode_values"
+            app:defaultValue="random"
+            app:persistent="true"
+            app:useSimpleSummaryProvider="true" />
+
+        <MultiSelectListPreference
+            app:key="grid_experiment_custom_targets"
+            app:title="Custom Target Numbers"
+            app:entries="@array/grid_target_entries"
+            app:entryValues="@array/grid_target_values"
+            app:defaultValue="@array/grid_target_values"
             app:persistent="true" />
     </PreferenceCategory>
 
