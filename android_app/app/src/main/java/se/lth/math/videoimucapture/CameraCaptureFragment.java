@@ -3,7 +3,6 @@ package se.lth.math.videoimucapture;
 import android.graphics.SurfaceTexture;
 import android.graphics.Color;
 import android.graphics.Rect;
-import android.media.MediaScannerConnection;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Handler;
@@ -71,6 +70,9 @@ public class CameraCaptureFragment extends Fragment
     private final GridTrialSequence mGridTrialSequence = new GridTrialSequence();
     private volatile TouchAnnotation mActiveGridTrialAnnotation;
     private boolean mGridExperimentEnabled;
+    private boolean mKeyboardCaptureEnabled;
+    private androidx.appcompat.widget.SwitchCompat mKeyboardSwitch;
+    private LetterCaptureView mLetterCaptureView;
 
     private boolean mRecordingEnabled;      // controls button state
     private boolean mForegroundStopRequested;
@@ -180,6 +182,31 @@ public class CameraCaptureFragment extends Fragment
         });
 
         mCaptureResultText = view.findViewById(R.id.captureResult_text);
+        mKeyboardSwitch = view.findViewById(R.id.keyboardCapture_switch);
+        mLetterCaptureView = view.findViewById(R.id.letterCapture_view);
+        mKeyboardCaptureEnabled = PreferenceManager.getDefaultSharedPreferences(requireContext())
+                .getBoolean("enable_keyboard_capture", false);
+        mKeyboardSwitch.setChecked(mKeyboardCaptureEnabled);
+        mKeyboardSwitch.setOnCheckedChangeListener((button, enabled) -> {
+            mKeyboardCaptureEnabled = enabled;
+            PreferenceManager.getDefaultSharedPreferences(requireContext()).edit()
+                    .putBoolean("enable_keyboard_capture", enabled).apply();
+            if (mRecordingEnabled) {
+                getsRecordingWriter().setKeyboardEnabled(enabled, android.os.SystemClock.elapsedRealtimeNanos());
+            }
+            if (enabled) stopGridExperiment();
+            else {
+                mLetterCaptureView.hideKeyboard();
+                if (mRecordingEnabled && mGridExperimentEnabled) startGridExperiment();
+            }
+            updateControls();
+            if (enabled && mRecordingEnabled) mLetterCaptureView.showKeyboard();
+        });
+        mLetterCaptureView.setListener((letter, timeNs) -> {
+            if (mRecordingEnabled && mKeyboardCaptureEnabled) {
+                getsRecordingWriter().recordLetter(letter, timeNs);
+            }
+        });
 
         mGridExperimentGrid = view.findViewById(R.id.gridExperiment_grid);
         mGridExperimentPrompt = view.findViewById(R.id.gridExperimentPrompt_text);
@@ -247,6 +274,7 @@ public class CameraCaptureFragment extends Fragment
     @Override
     public void onPause() {
         super.onPause();
+        if (mLetterCaptureView != null) mLetterCaptureView.hideKeyboard();
         mBackgroundUi.removeCallbacks(mBackgroundPoll);
 
         if (mRecordingEnabled) {
@@ -307,9 +335,10 @@ public class CameraCaptureFragment extends Fragment
             }
             mGLView.setVisibility(View.VISIBLE);
             mRecordingEnabled = startRecording();
-            if (mRecordingEnabled && mGridExperimentEnabled) startGridExperiment();
+            if (mRecordingEnabled && mGridExperimentEnabled && !mKeyboardCaptureEnabled) startGridExperiment();
         }
         updateControls();
+        if (mRecordingEnabled && mKeyboardCaptureEnabled) mLetterCaptureView.showKeyboard();
     }
 
     /** Starts/stops the separate background service path, which intentionally owns the camera. */
@@ -402,12 +431,29 @@ public class CameraCaptureFragment extends Fragment
         try {
             Context context = requireContext().getApplicationContext();
             recordingWriter.startRecording(metaFile, (path, error) -> {
-                MediaScannerConnection.scanFile(context, new String[]{path}, new String[]{"text/plain"}, null);
+                String publicPath = null;
+                Exception exportError = null;
+                try {
+                    publicPath = RecordingExporter.exportText(context, path);
+                } catch (Exception e) {
+                    exportError = e;
+                    Log.e(TAG, "Could not export TXT to Downloads", e);
+                }
+                String completedPublicPath = publicPath;
+                Exception completedExportError = exportError;
                 new Handler(Looper.getMainLooper()).post(() -> {
                     if (mForegroundWriter == recordingWriter) mForegroundWriter = null;
+                    String message;
+                    if (error != null) {
+                        message = "TXT recording failed: " + error.getMessage();
+                    } else if (completedExportError != null) {
+                        message = "TXT saved in app storage, but public copy failed: "
+                                + completedExportError.getMessage();
+                    } else {
+                        message = "TXT saved: " + completedPublicPath;
+                    }
                     Toast.makeText(context,
-                            error == null ? "TXT saved: " + path : "TXT recording failed: " + error.getMessage(),
-                            Toast.LENGTH_LONG).show();
+                            message, Toast.LENGTH_LONG).show();
                     if (error != null && isAdded() && mRecordingEnabled) {
                         mRecordingEnabled = false;
                         mForegroundStopRequested = true;
@@ -421,6 +467,7 @@ public class CameraCaptureFragment extends Fragment
             return false;
         }
 
+        recordingWriter.setKeyboardEnabled(mKeyboardCaptureEnabled, android.os.SystemClock.elapsedRealtimeNanos());
         mRenderer.resetOutputFiles(outputFile, recordingWriter); // this will not cause sync issues
         getmImuManager().startRecording(recordingWriter);
 
@@ -437,6 +484,8 @@ public class CameraCaptureFragment extends Fragment
 
     private void stopRecording() {
         Log.d(TAG, "Stop recording");
+        getsRecordingWriter().setKeyboardEnabled(false, android.os.SystemClock.elapsedRealtimeNanos());
+        if (mLetterCaptureView != null) mLetterCaptureView.hideKeyboard();
         stopGridExperiment();
         Camera2Proxy camera2Proxy = getmCamera2Proxy();
         if (camera2Proxy != null) {
@@ -479,6 +528,13 @@ public class CameraCaptureFragment extends Fragment
     public void updateControls() {
         boolean backgroundActive = BackgroundCaptureService.isActive();
         boolean foregroundWriterActive = getsRecordingWriter().isRecording();
+        if (mKeyboardSwitch != null) {
+            mKeyboardSwitch.setEnabled(!backgroundActive && !mForegroundStopRequested
+                    && (!foregroundWriterActive || mRecordingEnabled));
+            mLetterCaptureView.setVisibility(mKeyboardCaptureEnabled && !backgroundActive
+                    ? View.VISIBLE : View.GONE);
+            mLetterCaptureView.setEnabled(mKeyboardCaptureEnabled && mRecordingEnabled && !backgroundActive);
+        }
         setGridExperimentVisible(mGridExperimentEnabled && !backgroundActive);
         if (backgroundActive && mCaptureResultText != null) {
             mCaptureResultText.setText(mStopRequested ? "正在停止并保存，请稍候…" : BackgroundCaptureService.isReady()
@@ -518,7 +574,7 @@ public class CameraCaptureFragment extends Fragment
     }
 
     private void startGridExperiment() {
-        if (!mGridExperimentEnabled) return;
+        if (!mGridExperimentEnabled || mKeyboardCaptureEnabled) return;
         mGridTrialSequence.start();
         renderGridExperiment();
     }
@@ -539,7 +595,7 @@ public class CameraCaptureFragment extends Fragment
     }
 
     private void setGridExperimentVisible(boolean visible) {
-        int visibility = visible ? View.VISIBLE : View.GONE;
+        int visibility = visible && mGridExperimentEnabled && !mKeyboardCaptureEnabled ? View.VISIBLE : View.GONE;
         if (mGridExperimentGrid != null) mGridExperimentGrid.setVisibility(visibility);
         if (mGridExperimentPrompt != null) mGridExperimentPrompt.setVisibility(visibility);
     }

@@ -25,6 +25,7 @@
             android:stopWithTask="false" />
         <activity
             android:name=".CameraCaptureActivity"
+            android:windowSoftInputMode="adjustResize|stateAlwaysHidden"
             android:configChanges="keyboardHidden|orientation|screenSize"
             android:screenOrientation="portrait">
             <intent-filter>

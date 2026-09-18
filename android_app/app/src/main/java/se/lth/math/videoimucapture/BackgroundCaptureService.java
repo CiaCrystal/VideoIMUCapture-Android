@@ -43,6 +43,8 @@ public final class BackgroundCaptureService extends Service {
     private boolean initialized;
     private boolean cameraReady;
     private Exception failure;
+    private Exception exportFailure;
+    private String publicTextPath;
 
     public static void startFrom(CameraCaptureActivity activity) {
         if (active) return;
@@ -177,11 +179,24 @@ public final class BackgroundCaptureService extends Service {
         finished = true;
         activeWriter = null;
         if (failure == null) failure = error;
+        if (directory != null) {
+            try {
+                publicTextPath = RecordingExporter.exportText(getApplicationContext(),
+                        new File(directory, "video_meta.txt").toString());
+            } catch (Exception e) {
+                exportFailure = e;
+                android.util.Log.e("BackgroundCapture", "Could not export TXT to Downloads", e);
+            }
+        }
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         if (directory != null) MediaScannerConnection.scanFile(getApplicationContext(),
-                new String[]{new File(directory, "video_meta.txt").toString(), new File(directory, "video_recording.mp4").toString()},
-                new String[]{"text/plain", "video/mp4"}, null);
-        String result = failure == null ? "Saved: " + directory : "Recording incomplete: " + failure.getMessage();
+                new String[]{new File(directory, "video_recording.mp4").toString()},
+                new String[]{"video/mp4"}, null);
+        String result;
+        if (failure != null) result = "Recording incomplete: " + failure.getMessage();
+        else if (exportFailure != null) result = "Saved in app storage; public TXT copy failed: "
+                + exportFailure.getMessage();
+        else result = "Saved TXT: " + publicTextPath;
         ready = false;
         main.post(() -> {
             stopForeground(true);

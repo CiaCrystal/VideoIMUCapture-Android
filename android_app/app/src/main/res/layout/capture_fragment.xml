@@ -57,7 +57,38 @@
         android:textStyle="bold"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/captureResult_text" />
+        app:layout_constraintTop_toBottomOf="@+id/keyboardCapture_panel" />
+
+    <LinearLayout
+        android:id="@+id/keyboardCapture_panel"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginHorizontal="16dp"
+        android:background="#BB202020"
+        app:layout_constraintTop_toBottomOf="@id/captureResult_text"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/keyboardCapture_switch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="8dp"
+            android:text="@string/keyboard_capture_enable"
+            android:textColor="@android:color/white" />
+
+        <se.lth.math.videoimucapture.LetterCaptureView
+            android:id="@+id/letterCapture_view"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:padding="8dp"
+            android:gravity="center"
+            android:text="@string/keyboard_capture_prompt"
+            android:textColor="@android:color/white"
+            android:visibility="gone" />
+    </LinearLayout>
 
     <GridLayout
         android:id="@+id/gridExperiment_grid"

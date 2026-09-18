@@ -67,6 +67,10 @@ final class RecordingTextFormatter {
     }
 
     static String imu(IMUData data) {
+        return imu(data, null);
+    }
+
+    static String imu(IMUData data, KeyboardLabels labels) {
         StringBuilder out = section("IMU_DATA", "gyroscope,accelerometer,magnetometer");
         field(out, "time_ns", data.getTimeNs());
         vector(out, "gyroscope_rad_s", data.getGyroList());
@@ -78,6 +82,7 @@ final class RecordingTextFormatter {
         vector(out, "magnetometer_uT", data.getMagList());
         vector(out, "magnetometer_bias_uT", data.getMagBiasList());
         field(out, "magnetometer_accuracy", data.getMagAccuracyValue());
+        keyboardFields(out, labels, data.getTimeNs(), true);
         return out.append('\n').toString();
     }
 
@@ -206,6 +211,11 @@ final class RecordingTextFormatter {
     }
 
     static String frame(VideoFrameMetaData data, boolean matchedToVideo) {
+        return frame(data, matchedToVideo, null, false);
+    }
+
+    static String frame(VideoFrameMetaData data, boolean matchedToVideo,
+                        KeyboardLabels labels, boolean cameraRealtime) {
         StringBuilder out = section("FRAME_METADATA", "camera");
         field(out, "matched_to_video", matchedToVideo);
         field(out, "time_ns", data.getTimeNs());
@@ -260,6 +270,7 @@ final class RecordingTextFormatter {
             field(out, "y_shift_px", sample.getYShift());
             field(out, "target_label", sample.getTargetLabel());
             field(out, "trial_id", sample.getTrialId());
+            keyboardFields(out, labels, sample.getTimeNs(), cameraRealtime);
             out.append('\n');
         }
         for (int i = 0; i < data.getLensIntrinsicsSamplesCount(); i++) {
@@ -280,6 +291,28 @@ final class RecordingTextFormatter {
 
     private static Object floatAt(List<Float> values, int index) {
         return index < values.size() ? values.get(index) : "";
+    }
+
+    static String keyboardEvent(KeyboardLabels.Event event) {
+        StringBuilder out = section(event.label.isEmpty() ? "KEYBOARD_CAPTURE" : "KEYBOARD_EVENT",
+                "app_input_connection");
+        field(out, "time_ns", event.timeNs);
+        field(out, "timestamp_basis", "elapsed_realtime_callback");
+        field(out, "enabled", event.enabled);
+        field(out, "keyboard_label", event.label);
+        field(out, "keyboard_event_id", event.id);
+        field(out, "label_window_ns", KeyboardLabels.WINDOW_NS);
+        return out.append('\n').toString();
+    }
+
+    private static void keyboardFields(StringBuilder out, KeyboardLabels labels,
+                                       long timeNs, boolean clockComparable) {
+        if (labels == null) return;
+        KeyboardLabels.Event event = clockComparable ? labels.at(timeNs) : null;
+        field(out, "keyboard_clock_comparable", clockComparable);
+        field(out, "keyboard_label", event == null ? "" : event.label);
+        field(out, "keyboard_event_id", event == null ? -1 : event.id);
+        field(out, "keyboard_event_time_ns", event == null ? -1 : event.timeNs);
     }
 
     static String afModeName(int value) {

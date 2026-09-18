@@ -17,7 +17,7 @@
     <string name="record_description">Toggle recording</string>
     <string name="info_toolbar">Information</string>
     <string name="info_dialog_title">Information</string>
-    <string name="info_dialog_message">Records Video, IMU and Camera Meta Data to this location:\n %s</string>
+    <string name="info_dialog_message">Records Video, IMU and Camera Meta Data to this location:\n %s\n\nCompleted TXT files are also copied to Download/VideoIMUCapture so file managers and USB/MTP can open them.</string>
     <string name="info_dialog_button">OK</string>
     <string name="warning_icon_desc">Warning on Stabilization</string>
     <string name="warning_dialog_title">Warning</string>
@@ -29,4 +29,6 @@
     <string name="decline_permission_button">Keep it useless</string>
     <string name="warning_text_imu_missing">Cannot find IMU sensor</string>
     <string name="warning_text_distortion">Distrotion Correction enabled, distortion parameters are invalid.</string>
+    <string name="keyboard_capture_enable">键盘字母采集（A–Z）</string>
+    <string name="keyboard_capture_prompt">开始前台录制后点此呼出键盘\n请切换英文键盘，逐字母点按；不显示输入内容\n按输入回调后 200 ms 标注 IMU / OIS</string>
 </resources>

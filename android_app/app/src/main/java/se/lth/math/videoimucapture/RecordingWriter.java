@@ -29,7 +29,10 @@ public class RecordingWriter implements Runnable{
     final private Boolean VERBOSE = false;
 
     private BufferedWriter mFileStream;
-    private BlockingQueue<MessageWrapper> mQueue = new ArrayBlockingQueue<>(4096);
+    private BlockingQueue<Object> mQueue = new ArrayBlockingQueue<>(4096);
+    private KeyboardLabels mKeyboardLabels;
+    private boolean mKeyboardEnabled;
+    private boolean mCameraRealtime;
     private volatile boolean mAccepting;
     private volatile Exception mFailure;
     private Listener mListener;
@@ -66,6 +69,9 @@ public class RecordingWriter implements Runnable{
         mFrameDataQueue.clear();
         mFrameTimeQueue.clear();
         mQueue.clear();
+        mKeyboardLabels = null;
+        mKeyboardEnabled = false;
+        mCameraRealtime = false;
 
         //Start background thread
         Thread myThread = new Thread(this, "RecordingWriter");
@@ -89,8 +95,13 @@ public class RecordingWriter implements Runnable{
             mFileStream.flush(); // Make even a very short recording a visible text file.
             long lastFlush = System.nanoTime();
             while (mAccepting || !mQueue.isEmpty()) {
-                MessageWrapper msg = mQueue.poll(250, TimeUnit.MILLISECONDS);
-                if (msg != null) writeMessage(msg);
+                Object msg = mQueue.poll(250, TimeUnit.MILLISECONDS);
+                if (msg instanceof KeyboardLabels.Event) {
+                    KeyboardLabels.Event event = (KeyboardLabels.Event) msg;
+                    if (mKeyboardLabels == null) mKeyboardLabels = new KeyboardLabels();
+                    mKeyboardLabels.add(event);
+                    mFileStream.write(RecordingTextFormatter.keyboardEvent(event));
+                } else if (msg != null) writeMessage((MessageWrapper) msg);
                 if (System.nanoTime() - lastFlush >= 1_000_000_000L) {
                     mFileStream.flush();
                     lastFlush = System.nanoTime();
@@ -137,7 +148,7 @@ public class RecordingWriter implements Runnable{
             case FRAME_META:
                 if (VERBOSE) LOG.fine("Got Frame Meta");
                 if (mFrameDataQueue.size() == 100) {
-                    mFileStream.write(RecordingTextFormatter.frame(mFrameDataQueue.poll(), false));
+                    writeFrame(mFrameDataQueue.poll(), false);
                 }
                 mFrameDataQueue.add(msg.getFrameMeta());
                 tryVideoDataMerge();
@@ -152,13 +163,14 @@ public class RecordingWriter implements Runnable{
                 break;
             case IMU_DATA:
                 if (VERBOSE) LOG.fine("Got IMU data");
-                mFileStream.write(RecordingTextFormatter.imu(msg.getImuData()));
+                mFileStream.write(RecordingTextFormatter.imu(msg.getImuData(), mKeyboardLabels));
                 break;
             case IMU_META:
                 if (VERBOSE) LOG.fine("Got IMU Info");
                 mFileStream.write(RecordingTextFormatter.imuInfo(msg.getImuMeta()));
                 break;
             case CAMERA_META:
+                mCameraRealtime = msg.getCameraMeta().getTimestampSourceValue() == 1;
                 if (VERBOSE) LOG.fine("Got Camera Meta");
                 mFileStream.write(RecordingTextFormatter.cameraInfo(msg.getCameraMeta()));
                 break;
@@ -193,7 +205,7 @@ public class RecordingWriter implements Runnable{
                 // They are from the same capture frame
                 VideoFrameMetaData.Builder frameBuilder = VideoFrameMetaData.newBuilder().mergeFrom(frameMetaMsg)
                         .setFrameNumber(frameTimeMsg.getFrameNbr());
-                mFileStream.write(RecordingTextFormatter.frame(frameBuilder.build(), true));
+                writeFrame(frameBuilder.build(), true);
                 // Remove frames from queue
                 mFrameTimeQueue.poll();
                 mFrameDataQueue.poll();
@@ -201,7 +213,7 @@ public class RecordingWriter implements Runnable{
                 break;
             } else if (timeDiffNs > 0) {
                 //Meta message is too old, try another one
-                mFileStream.write(RecordingTextFormatter.frame(mFrameDataQueue.poll(), false));
+                writeFrame(mFrameDataQueue.poll(), false);
                 frameMetaMsg = mFrameDataQueue.peek();
                 LOG.fine("Diff too large, saved unmatched frame meta data");
             } else {
@@ -216,14 +228,30 @@ public class RecordingWriter implements Runnable{
 
     private void writeUnmatchedFrames() throws IOException {
         while (!mFrameDataQueue.isEmpty()) {
-            mFileStream.write(RecordingTextFormatter.frame(mFrameDataQueue.poll(), false));
+            writeFrame(mFrameDataQueue.poll(), false);
         }
         while (!mFrameTimeQueue.isEmpty()) {
             mFileStream.write(RecordingTextFormatter.unmatchedFrameTime(mFrameTimeQueue.poll()));
         }
     }
 
-    private synchronized void queueData(MessageWrapper msg) {
+    private void writeFrame(VideoFrameMetaData frame, boolean matched) throws IOException {
+        mFileStream.write(RecordingTextFormatter.frame(frame, matched, mKeyboardLabels, mCameraRealtime));
+    }
+
+    public synchronized void setKeyboardEnabled(boolean enabled, long timeNs) {
+        if (!mAccepting || enabled == mKeyboardEnabled) return;
+        mKeyboardEnabled = enabled;
+        queueData(new KeyboardLabels.Event(timeNs, "", enabled));
+    }
+
+    public synchronized void recordLetter(String letter, long timeNs) {
+        if (!mAccepting || !mKeyboardEnabled || letter == null
+                || !letter.matches("[A-Z]")) return;
+        queueData(new KeyboardLabels.Event(timeNs, letter, true));
+    }
+
+    private synchronized void queueData(Object msg) {
         if (!mAccepting) return;
         if (!mQueue.offer(msg)) {
             mFailure = new IOException("Recording queue full; storage cannot keep up. Recording is incomplete.");
