@@ -203,7 +203,7 @@ abstract class CameraSetting {
 class CameraSettingBoolean extends CameraSetting {
     private int mOnValue, mOffValue;
     private Boolean mDefaultOn, mRequestable;
-    private boolean mForceOff;
+    private boolean mAllowUnadvertisedOff;
     private boolean mOffAdvertised;
 
     public CameraSettingBoolean(String prefKey,
@@ -220,8 +220,8 @@ class CameraSettingBoolean extends CameraSetting {
                                 int onValue,
                                 CaptureRequest.Key requestKey,
                                 Boolean defaultOn,
-                                boolean forceOff) {
-        this(prefKey, modes, onValue, 1-onValue, requestKey, defaultOn, forceOff);
+                                boolean allowUnadvertisedOff) {
+        this(prefKey, modes, onValue, 1-onValue, requestKey, defaultOn, allowUnadvertisedOff);
     }
 
     public CameraSettingBoolean(String prefKey,
@@ -239,12 +239,12 @@ class CameraSettingBoolean extends CameraSetting {
                                 int offValue,
                                 CaptureRequest.Key requestKey,
                                 Boolean defaultOn,
-                                boolean forceOff) {
+                                boolean allowUnadvertisedOff) {
         mPrefKey = prefKey;
         mRequestKey = requestKey;
         mOnValue = onValue;
         mOffValue = offValue;
-        mForceOff = forceOff;
+        mAllowUnadvertisedOff = allowUnadvertisedOff;
         boolean forceDefault;
 
         boolean offAvailable = false;
@@ -258,15 +258,8 @@ class CameraSettingBoolean extends CameraSetting {
         mOffAdvertised = offAvailable;
 
         //Figure out valid default value
-        if (mForceOff) {
-            // Some vendor implementations advertise only ON. The experiment requires an
-            // explicit OFF request, so keep the UI and persisted value OFF and send OFF when
-            // the stabilization request key is otherwise exposed.
-            mDefaultOn = false;
-            mConfigurable = false;
-            mRequestable = requestKey != null && (offAvailable || onAvailable);
-            forceDefault = true;
-        } else if (offAvailable && onAvailable) {
+        if (isToggleConfigurable(offAvailable, onAvailable, requestKey != null,
+                mAllowUnadvertisedOff)) {
             mDefaultOn = defaultOn;
             mConfigurable = true;
             mRequestable = true;
@@ -286,6 +279,12 @@ class CameraSettingBoolean extends CameraSetting {
         if (!mSharedPreferences.contains(prefKey) || forceDefault) {
             mSharedPreferences.edit().putBoolean(prefKey, mDefaultOn).apply();
         }
+    }
+
+    static boolean isToggleConfigurable(boolean offAvailable, boolean onAvailable,
+                                        boolean requestKeyAvailable,
+                                        boolean allowUnadvertisedOff) {
+        return requestKeyAvailable && onAvailable && (offAvailable || allowUnadvertisedOff);
     }
 
     public Boolean isOn() {
@@ -311,11 +310,10 @@ class CameraSettingBoolean extends CameraSetting {
         super.updatePreference(preference);
         if (mPrefKey.equals("ois") || mPrefKey.equals("ois_data")) {
             String feature = mPrefKey.equals("ois") ? "Optical stabilization" : "OIS sample reporting";
-            preference.setSummary(mForceOff
-                    ? !mRequestable ? feature + " is OFF in the app; this camera exposes no Camera2 control."
-                    : mOffAdvertised ? feature + " is forced OFF for capture."
-                    : feature + " is forced OFF by the app although this camera advertises ON only; verify the per-frame actual mode."
-                    : mConfigurable ? feature + ". Applied when returning to the camera."
+            preference.setSummary(mConfigurable
+                    ? mAllowUnadvertisedOff && !mOffAdvertised
+                    ? feature + ". Defaults OFF; this camera advertises ON only, so verify the per-frame actual mode after requesting OFF."
+                    : feature + ". Defaults OFF; applied when returning to the camera."
                     : !mRequestable ? feature + " is not exposed by this camera's Camera2 API."
                     : mDefaultOn ? feature + " is always on; this camera cannot switch it off."
                     : feature + " cannot be enabled through this camera's Camera2 API.");

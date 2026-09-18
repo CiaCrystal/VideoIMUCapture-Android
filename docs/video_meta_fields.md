@@ -157,7 +157,7 @@
 | `distortion_correction` | `distortion_correction` | bool | 应用配置的畸变校正开关状态；没有对应的逐帧实际校正模式字段 |
 | `sensor_orientation_degrees` | `sensor_orientation` | int / 度 | `SENSOR_ORIENTATION`，相机传感器方向，通常 0、90、180、270 |
 
-OIS 能力数组中 `0=OFF`、`1=ON`：`[0, 1]` 表示同时声明两种模式，`[1]` 表示厂商只声明 ON，`[0]` 表示只声明 OFF，`[]` 表示没有导出能力值。当前 App 始终把开关和持久化值设为 OFF；即使遇到 `[1]` 也会尝试发送 OFF 请求，但驱动是否接受必须以逐帧 `actual_optical_stabilization_mode` 为准。能力数组不能代替 CaptureResult 的实际状态。
+OIS 能力数组中 `0=OFF`、`1=ON`：`[0, 1]` 表示同时声明两种模式，`[1]` 表示厂商只声明 ON，`[0]` 表示只声明 OFF，`[]` 表示没有导出能力值。安装后的 OIS 开关默认 OFF；只要当前相机声明了 ON 且请求键可用，开关就保持可操作。遇到异常的 `[1]` 时仍允许用户选择 OFF 并发送 OFF 请求，但驱动是否接受必须以逐帧 `actual_optical_stabilization_mode` 为准。只有没有声明 ON 或请求键不可用时开关才置灰。能力数组不能代替 CaptureResult 的实际状态。
 
 ### 5.2 内参与畸变
 
@@ -329,9 +329,9 @@ Android API 35+ 且相机提供 `STATISTICS_LENS_INTRINSICS_SAMPLES` 时，每�
 | 磁力计 `minDelay` | 10000 μs | 驱动报告能力对应约 100 Hz |
 | `estimated_accelerometer_frequency_hz` | 201.25284 | 录制开始时加速度计频率估计 |
 | `camera_id` | `0` | 当前打开的相机 ID |
-| `available_ois_modes` | `[1]` | 厂商只声明 OIS ON；新版 App 仍显示并请求 OFF |
-| `optical_image_stabilization` | `true` | 这是修改前录制文件中的旧值；新版应输出 `false` |
-| `actual_optical_stabilization_mode` | 302 条帧记录均为 1 | 旧文件中驱动逐帧报告 OIS 开启；新版仍须用该字段验证 OFF 请求是否生效 |
+| `available_ois_modes` | `[1]` | 厂商只声明 OIS ON；新版 App 仍启用开关，并默认选择 OFF |
+| `optical_image_stabilization` | `true` | 这是修改前录制文件中的旧值；新版在默认设置下应输出 `false`，用户手动开启后为 `true` |
+| `actual_optical_stabilization_mode` | 302 条帧记录均为 1 | 旧文件中驱动逐帧报告 OIS 开启；请求 OFF 后仍须用该字段验证驱动是否实际关闭 |
 | `available_ois_data_modes` | `[]` | 未导出 OIS sample reporting 能力 |
 | `actual_ois_data_mode` | 302 条均为 -1 | 未报告 OIS 数据模式 |
 | `ois_sample_count` | 302 条均为 0 | 本次没有 OIS 位移样本，不是位移恒为零 |
