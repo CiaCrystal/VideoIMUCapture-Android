@@ -748,13 +748,24 @@ public class Camera2Proxy {
             if (afSceneChange != null) frameBuilder.setAfSceneChange(afSceneChange);
             OisSample[] oisSamples = result.get(CaptureResult.STATISTICS_OIS_SAMPLES);
             if (oisSamples != null) {
+                CameraCaptureFragment.TouchAnnotation annotation = null;
+                if (mActivity instanceof CameraCaptureActivity) {
+                    CameraCaptureFragment fragment =
+                            ((CameraCaptureActivity) mActivity).getmCameraCaptureFragment();
+                    if (fragment != null) annotation = fragment.getActiveGridTrialAnnotation();
+                }
                 for (OisSample sample : oisSamples) {
                     float[] scaledSample = mFocalLengthHelper.transformOISSample(sample);
                     RecordingProtos.VideoFrameMetaData.OISSample.Builder oisBuilder =
                             RecordingProtos.VideoFrameMetaData.OISSample.newBuilder()
                                     .setTimeNs(sample.getTimestamp())
                                     .setXShift(scaledSample[0])
-                                    .setYShift(scaledSample[1]);
+                                    .setYShift(scaledSample[1])
+                                    .setTrialId(-1);
+                    if (annotation != null) {
+                        oisBuilder.setTargetLabel(annotation.targetLabel)
+                                .setTrialId(annotation.trialId);
+                    }
                     frameBuilder.addOISSamples(oisBuilder);
                 }
             }

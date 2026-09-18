@@ -1,6 +1,5 @@
 package se.lth.math.videoimucapture;
 
-import android.app.Activity;
 import android.content.Context;
 import android.hardware.Sensor;
 import android.hardware.SensorAdditionalInfo;
@@ -13,17 +12,29 @@ import android.os.HandlerThread;
 import android.os.Process;
 import android.util.Log;
 
+import androidx.preference.PreferenceManager;
+
 
 
 public class IMUManager extends SensorEventCallback {
     private static final String TAG = "IMUManager";
+    private static final String ACCEL_FREQUENCY_KEY = "accelerometer_sampling_frequency_hz";
+    private static final String GYRO_FREQUENCY_KEY = "gyroscope_sampling_frequency_hz";
+    private static final int DEFAULT_FREQUENCY_HZ = 100;
+    private static final int[] ALLOWED_FREQUENCIES_HZ = {50, 100, 200, 300, 400};
     private int ACC_TYPE;
     private int GYRO_TYPE;
     private int MAG_TYPE;
 
-    private final int mSensorRate = 10000; // microseconds: request 100 Hz
-    private volatile long mEstimatedSensorRate = 0;
-    private long mPrevTimestamp = 0;
+    private final Context mContext;
+    private int mRequestedAccelFrequencyHz = DEFAULT_FREQUENCY_HZ;
+    private int mRequestedGyroFrequencyHz = DEFAULT_FREQUENCY_HZ;
+    private int mAccelSamplingPeriodUs = 1_000_000 / DEFAULT_FREQUENCY_HZ;
+    private int mGyroSamplingPeriodUs = 1_000_000 / DEFAULT_FREQUENCY_HZ;
+    private volatile long mEstimatedAccelPeriodNs = 0;
+    private volatile long mEstimatedGyroPeriodNs = 0;
+    private long mPrevAccelTimestamp = 0;
+    private long mPrevGyroTimestamp = 0;
     private float[] mSensorPlacement = null;
     private final ImuSynchronizer mSynchronizer = new ImuSynchronizer();
 
@@ -43,11 +54,13 @@ public class IMUManager extends SensorEventCallback {
 
     public IMUManager(Context activity) {
         super();
+        mContext = activity.getApplicationContext();
         mSensorManager = (SensorManager) activity.getSystemService(Context.SENSOR_SERVICE);
         setSensorType();
         mAccel = mSensorManager.getDefaultSensor(ACC_TYPE);
         mGyro = mSensorManager.getDefaultSensor(GYRO_TYPE);
         mMag = mSensorManager.getDefaultSensor(MAG_TYPE);
+        loadSamplingPreferences();
     }
 
     private void setSensorType() {
@@ -64,6 +77,7 @@ public class IMUManager extends SensorEventCallback {
     }
 
     public synchronized void startRecording(RecordingWriter recordingWriter) {
+        refreshSamplingRates();
         mSynchronizer.clear();
         mRecordingWriter = recordingWriter;
         writeMetaData();
@@ -138,7 +152,10 @@ public class IMUManager extends SensorEventCallback {
         if (mMag != null) {
             builder.setMagInfo(mMag.toString()).setMagResolution(mMag.getResolution());
         }
-        builder.setSampleFrequency(getSensorFrequency());
+        builder.setRequestedAccelerometerFrequencyHz(mRequestedAccelFrequencyHz)
+                .setRequestedGyroscopeFrequencyHz(mRequestedGyroFrequencyHz)
+                .setSampleFrequency(getSensorFrequency())
+                .setEstimatedGyroscopeFrequencyHz(getGyroscopeFrequency());
 
         //Store translation for sensor placement in device coordinate system.
         if (mSensorPlacement != null && mSensorPlacement.length >= 12) {
@@ -149,22 +166,48 @@ public class IMUManager extends SensorEventCallback {
         mRecordingWriter.queueData(builder.build());
     }
 
-    private void updateSensorRate(SensorEvent event) {
-        long diff = event.timestamp - mPrevTimestamp;
-        if (mPrevTimestamp != 0 && diff > 0) {
-            mEstimatedSensorRate = mEstimatedSensorRate == 0 ? diff : mEstimatedSensorRate + ((diff - mEstimatedSensorRate) >> 3);
+    private long updateEstimatedPeriod(long previousTimestamp, long estimatedPeriod,
+                                       long timestamp) {
+        long diff = timestamp - previousTimestamp;
+        if (previousTimestamp != 0 && diff > 0) {
+            return estimatedPeriod == 0
+                    ? diff : estimatedPeriod + ((diff - estimatedPeriod) >> 3);
         }
-        mPrevTimestamp = event.timestamp;
+        return estimatedPeriod;
     }
 
     public float getSensorFrequency() {
-        return mEstimatedSensorRate > 0 ? 1e9f / mEstimatedSensorRate : 0;
+        return frequencyFromPeriod(mEstimatedAccelPeriodNs);
+    }
+
+    public float getGyroscopeFrequency() {
+        return frequencyFromPeriod(mEstimatedGyroPeriodNs);
+    }
+
+    public int getRequestedAccelerometerFrequencyHz() {
+        return mRequestedAccelFrequencyHz;
+    }
+
+    public int getRequestedGyroscopeFrequencyHz() {
+        return mRequestedGyroFrequencyHz;
+    }
+
+    private float frequencyFromPeriod(long periodNs) {
+        return periodNs > 0 ? 1e9f / periodNs : 0;
     }
 
     @Override
     public synchronized final void onSensorChanged(SensorEvent event) {
         int type = event.sensor.getType();
-        if (type == ACC_TYPE) updateSensorRate(event);
+        if (type == ACC_TYPE) {
+            mEstimatedAccelPeriodNs = updateEstimatedPeriod(
+                    mPrevAccelTimestamp, mEstimatedAccelPeriodNs, event.timestamp);
+            mPrevAccelTimestamp = event.timestamp;
+        } else if (type == GYRO_TYPE) {
+            mEstimatedGyroPeriodNs = updateEstimatedPeriod(
+                    mPrevGyroTimestamp, mEstimatedGyroPeriodNs, event.timestamp);
+            mPrevGyroTimestamp = event.timestamp;
+        }
         // Preview must not build a backlog that is replayed at recording start.
         if (!mRecordingInertialData) return;
         if (type == ACC_TYPE) mSynchronizer.addAccel(event.timestamp, event.values);
@@ -192,14 +235,70 @@ public class IMUManager extends SensorEventCallback {
         if (!sensorsExist()) {
             return;
         }
+        loadSamplingPreferences();
+        resetFrequencyEstimates();
         mSensorThread = new HandlerThread("Sensor thread",
                 Process.THREAD_PRIORITY_MORE_FAVORABLE);
         mSensorThread.start();
         // Blocks until looper is prepared, which is fairly quick
         Handler sensorHandler = new Handler(mSensorThread.getLooper());
-        mSensorManager.registerListener(this, mAccel, mSensorRate, sensorHandler);
-        mSensorManager.registerListener(this, mGyro, mSensorRate, sensorHandler);
+        boolean accelRegistered = mSensorManager.registerListener(
+                this, mAccel, mAccelSamplingPeriodUs, sensorHandler);
+        boolean gyroRegistered = mSensorManager.registerListener(
+                this, mGyro, mGyroSamplingPeriodUs, sensorHandler);
+        if (!accelRegistered || !gyroRegistered) {
+            Log.e(TAG, "Failed to register IMU listener: accel=" + accelRegistered
+                    + ", gyro=" + gyroRegistered);
+        }
         if (mMag != null) mSensorManager.registerListener(this, mMag, Math.max(10000, mMag.getMinDelay()), sensorHandler);
+    }
+
+    public synchronized void refreshSamplingRates() {
+        if (mRecordingInertialData) return;
+        int oldAccelHz = mRequestedAccelFrequencyHz;
+        int oldGyroHz = mRequestedGyroFrequencyHz;
+        loadSamplingPreferences();
+        if (mSensorThread != null && (oldAccelHz != mRequestedAccelFrequencyHz
+                || oldGyroHz != mRequestedGyroFrequencyHz)) {
+            unregister();
+            register();
+        }
+    }
+
+    private void loadSamplingPreferences() {
+        mRequestedAccelFrequencyHz = readFrequencyPreference(ACCEL_FREQUENCY_KEY);
+        mRequestedGyroFrequencyHz = readFrequencyPreference(GYRO_FREQUENCY_KEY);
+        mAccelSamplingPeriodUs = samplingPeriodUs(mRequestedAccelFrequencyHz, mAccel);
+        mGyroSamplingPeriodUs = samplingPeriodUs(mRequestedGyroFrequencyHz, mGyro);
+    }
+
+    private int readFrequencyPreference(String key) {
+        String value = PreferenceManager.getDefaultSharedPreferences(mContext)
+                .getString(key, Integer.toString(DEFAULT_FREQUENCY_HZ));
+        try {
+            int frequency = Integer.parseInt(value);
+            for (int allowed : ALLOWED_FREQUENCIES_HZ) {
+                if (frequency == allowed) return frequency;
+            }
+        } catch (NumberFormatException ignored) {
+            // Fall through to the safe default if an older build stored an invalid value.
+        }
+        return DEFAULT_FREQUENCY_HZ;
+    }
+
+    private int samplingPeriodUs(int frequencyHz, Sensor sensor) {
+        int requestedPeriodUs = Math.round(1_000_000f / frequencyHz);
+        int sensorMinimumPeriodUs = sensor == null ? 0 : sensor.getMinDelay();
+        return sensorMinimumPeriodUs > 0
+                ? Math.max(requestedPeriodUs, sensorMinimumPeriodUs)
+                : requestedPeriodUs;
+    }
+
+    private void resetFrequencyEstimates() {
+        mEstimatedAccelPeriodNs = 0;
+        mEstimatedGyroPeriodNs = 0;
+        mPrevAccelTimestamp = 0;
+        mPrevGyroTimestamp = 0;
     }
 
     /**

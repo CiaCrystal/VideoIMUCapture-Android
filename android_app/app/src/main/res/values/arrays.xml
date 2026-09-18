@@ -10,6 +10,21 @@
         <item>Manual</item>
     </string-array>
 
+    <string-array name="imu_sampling_frequency_entries">
+        <item>50 Hz</item>
+        <item>100 Hz</item>
+        <item>200 Hz</item>
+        <item>300 Hz</item>
+        <item>400 Hz</item>
+    </string-array>
+    <string-array name="imu_sampling_frequency_values">
+        <item>50</item>
+        <item>100</item>
+        <item>200</item>
+        <item>300</item>
+        <item>400</item>
+    </string-array>
+
     <string-array name="grid_experiment_mode_entries">
         <item>Random</item>
         <item>Custom</item>

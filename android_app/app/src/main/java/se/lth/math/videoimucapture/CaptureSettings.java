@@ -58,6 +58,15 @@ public class CaptureSettings extends PreferenceFragmentCompat {
 
     }
 
+    @Override
+    public void onDestroyView() {
+        CameraCaptureActivity activity = (CameraCaptureActivity) getActivity();
+        if (activity != null && !BackgroundCaptureService.isActive()) {
+            activity.getmImuManager().refreshSamplingRates();
+        }
+        super.onDestroyView();
+    }
+
     private void configureGridExperimentPreferences() {
         SwitchPreferenceCompat enabledPreference = findPreference(GRID_ENABLED_KEY);
         ListPreference modePreference = findPreference(GRID_MODE_KEY);

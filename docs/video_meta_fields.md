@@ -66,7 +66,10 @@
 | `accelerometer_resolution_m_s2` | `accel_resolution` | float / m/s² | 加速度计 `Sensor.getResolution()` |
 | `magnetometer_info` | `mag_info` | string | 磁力计 `Sensor.toString()`；没有传感器时可为空字符串 |
 | `magnetometer_resolution_uT` | `mag_resolution` | float / μT | 磁力计 `Sensor.getResolution()`；未赋值时为 0 |
+| `requested_accelerometer_frequency_hz` | `requested_accelerometer_frequency_hz` | float / Hz | Settings 中选择的加速度计请求频率；可选 50/100/200/300/400 Hz，默认 100 Hz。若高于设备能力，注册周期会按 `minDelay` 限速 |
+| `requested_gyroscope_frequency_hz` | `requested_gyroscope_frequency_hz` | float / Hz | Settings 中选择的陀螺仪请求频率；规则同上 |
 | `estimated_accelerometer_frequency_hz` | `sample_frequency` | float / Hz | 由**加速度计事件时间戳间隔**平滑估计，开始录制时写入一次；不是陀螺仪实测频率，也不是最终 TXT 样本频率 |
+| `estimated_gyroscope_frequency_hz` | `estimated_gyroscope_frequency_hz` | float / Hz | 由**陀螺仪事件时间戳间隔**平滑估计，开始录制时写入一次；刚注册监听器便开始录制时可能为 0 |
 | `accelerometer_placement_m` | `placement` | float[3] / m | 从加速度计 `TYPE_SENSOR_PLACEMENT` 附加信息的 3、7、11 索引提取位置平移；未提供或开始录制时尚未收到则为 `[]`，不是完整 3×4 放置矩阵 |
 
 ### 3.2 `*_info` 字符串内部内容
@@ -85,6 +88,8 @@
 | `minDelay` | 驱动报告最小事件周期 | μs；是能力信息，不是此次录制的实际间隔 |
 
 可用 `1,000,000 / minDelay` 估算驱动报告的最高频率（`minDelay > 0` 时），但系统限制、请求周期、负载和驱动行为都会影响实际结果。接口定义见 [Android Sensor](https://developer.android.com/reference/android/hardware/Sensor)。
+
+加速度计和陀螺仪的频率可独立设置，选择结果在下一次录制开始时生效。Android 的采样周期是请求值而非严格保证值；为减少当前“以陀螺仪为时间基准、对加速度计插值”的同步链路中的额外插值，通常建议两者选择相同频率。
 
 ## 4. IMU_DATA：逐样本测量值
 
@@ -258,8 +263,12 @@ OIS 样本作为独立 `[OIS_SAMPLE]` 区块输出。若父帧的 `ois_sample_co
 | `time_ns` | `OIS_samples[i].time_ns` | int64 / ns | `OisSample.getTimestamp()`，该 OIS 样本的时间戳 |
 | `x_shift_px` | `OIS_samples[i].x_shift` | float / px | x 方向的光学防抖图像位移，经项目缩放和方向变换 |
 | `y_shift_px` | `OIS_samples[i].y_shift` | float / px | y 方向的位移，经同样处理 |
+| `target_label` | `OIS_samples[i].target_label` | string | 处理该父帧相机回调时，前台 3×3 实验当前高亮区域（`KEY_1`～`KEY_9`）；实验未激活或后台采集时为空 |
+| `trial_id` | `OIS_samples[i].trial_id` | int64 | 与 `target_label` 对应的当前轮次；实验未激活或后台采集时为 -1 |
 
 数据来源为 API 28+ 的 `CaptureResult.STATISTICS_OIS_SAMPLES`。Android 原始 OIS 位移以像素表达；本项目不是输出机械镜片移动的毫米数，也不是角速度。参考 [OisSample](https://developer.android.com/reference/android/hardware/camera2/params/OisSample)。
+
+同一个父帧中的 OIS 样本使用同一份实验状态快照。正确点击的 `TOUCH_EVENT` 会保存被点击目标；随后九宫格进入下一轮，因此点击边界附近应结合 OIS 的 `time_ns` 和触摸事件时间戳分析。
 
 ### 7.1 项目实施的坐标变换
 
@@ -295,7 +304,7 @@ Android API 35+ 且相机提供 `STATISTICS_LENS_INTRINSICS_SAMPLES` 时，每�
 
 录制期间 App 窗口内的 DOWN、UP、POINTER_DOWN、POINTER_UP 和 CANCEL 事件分别输出一条，字段包括 `time_ns`、`action`/`action_name`、`x_px`、`y_px`、`pressure`、`size`、`pointer_id`、`target_label` 和 `trial_id`。时间从输入事件的 uptime 时钟换算到 elapsed realtime，以便与 `REALTIME` Camera 时间和 SensorEvent 时间对齐。
 
-3×3 点击实验默认关闭，可通过 `Settings → Experiment → Enable 3×3 Target Grid` 开启。其下方的 `Target Selection Mode` 提供 `Random` 和 `Custom` 两种模式：随机模式沿用全部九个数字；自定义模式通过 `Custom Target Numbers` 多选 1～9，后续只从所选数字中产生目标，并且至少需要选择一个。前台录制开始时界面从左上到右下对应 `KEY_1`～`KEY_9`，每个 TXT 的 `trial_id` 从 1 开始。随机高亮的格子是本轮目标；点中该格后 `trial_id` 加 1，并在可用目标中随机选择下一格；可用目标多于一个时不会与上一轮相同，只选择一个数字时该目标会重复。落在当前高亮格内的触摸事件自动填写本轮 `target_label` 和 `trial_id`；点错、点击界面外或关闭实验开关时仍保留触摸数据，但写为 `target_label=`、`trial_id=-1`，且不推进轮次。后台采集不显示或启用该交互实验。
+3×3 点击实验默认关闭，可通过 `Settings → Experiment → Enable 3×3 Target Grid` 开启。其下方的 `Target Selection Mode` 提供 `Random` 和 `Custom` 两种模式：随机模式沿用全部九个数字；自定义模式通过 `Custom Target Numbers` 多选 1～9，后续只从所选数字中产生目标，并且至少需要选择一个。前台录制开始时界面从左上到右下对应 `KEY_1`～`KEY_9`，每个 TXT 的 `trial_id` 从 1 开始。随机高亮的格子是本轮目标；点中该格后 `trial_id` 加 1，并在可用目标中随机选择下一格；可用目标多于一个时不会与上一轮相同，只选择一个数字时该目标会重复。落在当前高亮格内的触摸事件自动填写本轮 `target_label` 和 `trial_id`；点错、点击界面外或关闭实验开关时仍保留触摸数据，但写为 `target_label=`、`trial_id=-1`，且不推进轮次。可用时，`OIS_SAMPLE` 也记录当前轮次和高亮区域。后台采集不显示或启用该交互实验，其 OIS 标签为空且 `trial_id=-1`。
 
 ## 8. FRAME_TIMESTAMP：未匹配的编码帧
 

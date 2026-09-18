@@ -39,6 +39,30 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        app:key="imu_sampling_category"
+        app:title="IMU Sampling"
+        app:summary="The requested rate is applied when the next recording starts. Actual rates depend on the device.">
+
+        <ListPreference
+            app:key="accelerometer_sampling_frequency_hz"
+            app:title="Accelerometer Frequency"
+            app:entries="@array/imu_sampling_frequency_entries"
+            app:entryValues="@array/imu_sampling_frequency_values"
+            app:defaultValue="100"
+            app:persistent="true"
+            app:useSimpleSummaryProvider="true" />
+
+        <ListPreference
+            app:key="gyroscope_sampling_frequency_hz"
+            app:title="Gyroscope Frequency"
+            app:entries="@array/imu_sampling_frequency_entries"
+            app:entryValues="@array/imu_sampling_frequency_values"
+            app:defaultValue="100"
+            app:persistent="true"
+            app:useSimpleSummaryProvider="true" />
+    </PreferenceCategory>
+
+    <PreferenceCategory
         app:key="experiment_category"
         app:title="Experiment">
 

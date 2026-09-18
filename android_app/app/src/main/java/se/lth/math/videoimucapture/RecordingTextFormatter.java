@@ -89,7 +89,13 @@ final class RecordingTextFormatter {
         field(out, "accelerometer_resolution_m_s2", data.getAccelResolution());
         field(out, "magnetometer_info", data.getMagInfo());
         field(out, "magnetometer_resolution_uT", data.getMagResolution());
+        field(out, "requested_accelerometer_frequency_hz",
+                data.getRequestedAccelerometerFrequencyHz());
+        field(out, "requested_gyroscope_frequency_hz",
+                data.getRequestedGyroscopeFrequencyHz());
         field(out, "estimated_accelerometer_frequency_hz", data.getSampleFrequency());
+        field(out, "estimated_gyroscope_frequency_hz",
+                data.getEstimatedGyroscopeFrequencyHz());
         vector(out, "accelerometer_placement_m", data.getPlacementList());
         return out.append('\n').toString();
     }
@@ -252,6 +258,8 @@ final class RecordingTextFormatter {
             field(out, "time_ns", sample.getTimeNs());
             field(out, "x_shift_px", sample.getXShift());
             field(out, "y_shift_px", sample.getYShift());
+            field(out, "target_label", sample.getTargetLabel());
+            field(out, "trial_id", sample.getTrialId());
             out.append('\n');
         }
         for (int i = 0; i < data.getLensIntrinsicsSamplesCount(); i++) {

@@ -58,9 +58,10 @@ public class RecordingTextFormatterTest {
                         .setRight(3).setBottom(4).setWeight(999))
                 .addAllLensIntrinsicCalibration(Arrays.asList(800f, 801f, 400f, 300f, 0f))
                 .addOISSamples(VideoFrameMetaData.OISSample.newBuilder().setTimeNs(1234567800L)
-                        .setXShift(-0.25f).setYShift(0.5f))
+                        .setXShift(-0.25f).setYShift(0.5f)
+                        .setTargetLabel("KEY_7").setTrialId(12))
                 .addOISSamples(VideoFrameMetaData.OISSample.newBuilder().setTimeNs(1234567900L)
-                        .setXShift(0.125f).setYShift(-0.75f))
+                        .setXShift(0.125f).setYShift(-0.75f).setTrialId(-1))
                 .addLensIntrinsicsSamples(VideoFrameMetaData.LensIntrinsicsSample.newBuilder()
                         .setTimeNs(1234567850L)
                         .addAllIntrinsics(Arrays.asList(800f, 801f, 400.5f, 300.5f, 0f))).build();
@@ -76,10 +77,12 @@ public class RecordingTextFormatterTest {
                 "lens_intrinsic_calibration_fx_fy_cx_cy_s=[800, 801, 400, 300, 0]",
                 "ois_sample_count=2", "lens_intrinsics_sample_count=1", "sample_index=0",
                 "parent_camera_frame_number=99", "x_shift_px=-0.25", "y_shift_px=0.5",
+                "target_label=KEY_7", "trial_id=12",
                 "fx=800", "fy=801", "cx=400.5", "cy=300.5", "skew=0"}) {
             assertTrue(line, text.contains(line + "\n"));
         }
         assertEquals(2, text.split("\\[OIS_SAMPLE\\]", -1).length - 1);
+        assertTrue(text.contains("target_label=\ntrial_id=-1\n"));
         assertEquals(1, text.split("\\[LENS_INTRINSICS_SAMPLE\\]", -1).length - 1);
         String unmatched = RecordingTextFormatter.frame(frame, false);
         assertTrue(unmatched.contains("matched_to_video=false\n"));
@@ -151,7 +154,10 @@ public class RecordingTextFormatterTest {
         IMUInfo info = IMUInfo.newBuilder().setGyroInfo("gyro\n[FAKE_SECTION]")
                 .setAccelInfo("accelerometer").setMagInfo("magnetometer")
                 .setGyroResolution(0.01f).setAccelResolution(0.02f).setMagResolution(0.03f)
-                .setSampleFrequency(200).addPlacement(0.01f).build();
+                .setRequestedAccelerometerFrequencyHz(300)
+                .setRequestedGyroscopeFrequencyHz(400)
+                .setSampleFrequency(299.5f).setEstimatedGyroscopeFrequencyHz(398.5f)
+                .addPlacement(0.01f).build();
         text = RecordingTextFormatter.imuInfo(info);
         assertTrue(text.contains("gyroscope_info=gyro\\n[FAKE_SECTION]\n"));
         assertTrue(text.contains("accelerometer_info=accelerometer\n"));
@@ -159,7 +165,10 @@ public class RecordingTextFormatterTest {
         assertTrue(text.contains("gyroscope_resolution_rad_s=0.01\n"));
         assertTrue(text.contains("accelerometer_resolution_m_s2=0.02\n"));
         assertTrue(text.contains("magnetometer_resolution_uT=0.03\n"));
-        assertTrue(text.contains("estimated_accelerometer_frequency_hz=200\n"));
+        assertTrue(text.contains("requested_accelerometer_frequency_hz=300\n"));
+        assertTrue(text.contains("requested_gyroscope_frequency_hz=400\n"));
+        assertTrue(text.contains("estimated_accelerometer_frequency_hz=299.5\n"));
+        assertTrue(text.contains("estimated_gyroscope_frequency_hz=398.5\n"));
         assertTrue(text.contains("accelerometer_placement_m=[0.01]\n"));
     }
 

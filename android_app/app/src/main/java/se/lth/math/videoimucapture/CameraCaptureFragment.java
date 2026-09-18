@@ -69,6 +69,7 @@ public class CameraCaptureFragment extends Fragment
     private TextView mGridExperimentPrompt;
     private TextView[] mGridCells;
     private final GridTrialSequence mGridTrialSequence = new GridTrialSequence();
+    private volatile TouchAnnotation mActiveGridTrialAnnotation;
     private boolean mGridExperimentEnabled;
 
     private boolean mRecordingEnabled;      // controls button state
@@ -481,7 +482,7 @@ public class CameraCaptureFragment extends Fragment
         setGridExperimentVisible(mGridExperimentEnabled && !backgroundActive);
         if (backgroundActive && mCaptureResultText != null) {
             mCaptureResultText.setText(mStopRequested ? "正在停止并保存，请稍候…" : BackgroundCaptureService.isReady()
-                    ? "后台采集中：视频 + IMU 100 Hz。可按 Home 或锁屏，通知栏可停止保存。"
+                    ? "后台采集中：视频 + IMU。可按 Home 或锁屏，通知栏可停止保存。"
                     : "正在启动后台采集，请稍候…");
         }
         if (mBackgroundButton != null) {
@@ -571,9 +572,12 @@ public class CameraCaptureFragment extends Fragment
     }
 
     private void renderGridExperiment() {
-        if (mGridCells == null || mGridExperimentPrompt == null) return;
         boolean active = mGridTrialSequence.isActive();
         int target = mGridTrialSequence.getTargetIndex();
+        mActiveGridTrialAnnotation = active
+                ? new TouchAnnotation(mGridTrialSequence.getTargetLabel(),
+                mGridTrialSequence.getTrialId()) : null;
+        if (mGridCells == null || mGridExperimentPrompt == null) return;
         for (int i = 0; i < mGridCells.length; i++) {
             boolean highlighted = active && i == target;
             mGridCells[i].setEnabled(active);
@@ -600,6 +604,12 @@ public class CameraCaptureFragment extends Fragment
                 || !bounds.contains((int) rawX, (int) rawY)) return null;
         return new TouchAnnotation(mGridTrialSequence.getTargetLabel(),
                 mGridTrialSequence.getTrialId());
+    }
+
+    /** Immutable snapshot used by camera callbacks running off the UI thread. */
+    @Nullable
+    TouchAnnotation getActiveGridTrialAnnotation() {
+        return mActiveGridTrialAnnotation;
     }
 
     static final class TouchAnnotation {

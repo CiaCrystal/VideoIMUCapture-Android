@@ -136,6 +136,8 @@ message VideoFrameMetaData {
     int64 time_ns = 1;
     float x_shift = 2;
     float y_shift = 3;
+    string target_label = 4;
+    int64 trial_id = 5;
   }
   repeated OISSample OIS_samples =10;
   bool focus_locked = 11;
@@ -181,6 +183,11 @@ message IMUInfo {
   // added for magnetometer support
   string mag_info = 7;
   float mag_resolution = 8;
+
+  // User-selected rates are requests; device/OS limits can produce lower actual rates.
+  float requested_accelerometer_frequency_hz = 9;
+  float requested_gyroscope_frequency_hz = 10;
+  float estimated_gyroscope_frequency_hz = 11;
 }
 
 message IMUData {

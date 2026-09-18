@@ -65,7 +65,7 @@ public final class BackgroundCaptureService extends Service {
             getSystemService(NotificationManager.class).createNotificationChannel(
                     new NotificationChannel(CHANNEL, "Video and IMU recording", NotificationManager.IMPORTANCE_LOW));
         }
-        startForeground(NOTIFICATION, notification("Starting video + IMU (100 Hz)", true));
+        startForeground(NOTIFICATION, notification("Starting video + IMU", true));
         thread = new HandlerThread("BackgroundCapture");
         thread.start();
         worker = new Handler(thread.getLooper());
@@ -124,7 +124,10 @@ public final class BackgroundCaptureService extends Service {
                 cameraReady = true;
                 ready = true;
                 main.post(() -> getSystemService(NotificationManager.class).notify(NOTIFICATION,
-                        notification("Recording video + IMU (100 Hz). Tap Stop and save to finish.", true)));
+                        notification("Recording video + IMU (accelerometer "
+                                + imu.getRequestedAccelerometerFrequencyHz() + " Hz, gyroscope "
+                                + imu.getRequestedGyroscopeFrequencyHz()
+                                + " Hz requested). Tap Stop and save to finish.", true)));
             }), error -> worker.post(() -> stopCapture(error)));
             imu = new IMUManager(getApplicationContext());
             if (!imu.sensorsExist()) throw new IllegalStateException("Accelerometer or gyroscope unavailable");
